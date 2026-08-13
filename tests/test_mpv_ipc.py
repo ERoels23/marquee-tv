@@ -60,8 +60,14 @@ def test_set_title_wraps_command(tmp_path):
 
 
 def test_send_command_returns_false_for_unserializable_command(tmp_path):
+    sock_path = tmp_path / "mpv3.sock"
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(sock_path))
+    server.listen(1)
+
     class NotSerializable:
         pass
 
-    ok = send_command(tmp_path / "irrelevant.sock", [NotSerializable()])
+    ok = send_command(sock_path, [NotSerializable()])
+    server.close()
     assert ok is False
