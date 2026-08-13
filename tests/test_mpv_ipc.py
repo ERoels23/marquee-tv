@@ -57,3 +57,11 @@ def test_set_title_wraps_command(tmp_path):
 
     payload = json.loads(received["raw"].decode("utf-8").strip())
     assert payload["command"] == ["set_property", "title", "Jerma ::: Just Chatting ::: bit stuff"]
+
+
+def test_send_command_returns_false_for_unserializable_command(tmp_path):
+    class NotSerializable:
+        pass
+
+    ok = send_command(tmp_path / "irrelevant.sock", [NotSerializable()])
+    assert ok is False

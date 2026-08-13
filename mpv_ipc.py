@@ -12,7 +12,7 @@ def send_command(socket_path: Union[str, Path], command: List[str]) -> bool:
             payload = json.dumps({"command": command}) + "\n"
             sock.sendall(payload.encode("utf-8"))
         return True
-    except OSError:
+    except (OSError, TypeError, ValueError):
         return False
 
 
