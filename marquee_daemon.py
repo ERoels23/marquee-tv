@@ -154,6 +154,10 @@ class TwitchTVController:
         # instance first. Chatterino persists its open tabs across restarts, so this
         # still achieves "switch to this channel's tab" from the user's perspective.
         subprocess.run(["pkill", "-x", "chatterino"], capture_output=True)
+        for _ in range(20):  # poll up to ~2s for it to actually exit
+            if subprocess.run(["pgrep", "-x", "chatterino"], capture_output=True).returncode != 0:
+                break
+            time.sleep(0.1)
         subprocess.Popen(
             ["chatterino", "-a", streamer],
             stdout=subprocess.DEVNULL,
