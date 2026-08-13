@@ -159,25 +159,45 @@ class MarqueeApp(App):
         return rows
 
     def render_frame(self) -> None:
+        from rich.cells import cell_len, set_cell_size
+
         inner_width = OUTER_WIDTH - 2
-        header_box_width = inner_width - 2
+        header_box_width = inner_width - 4
         header_inner = header_box_width - 2
+        list_box_width = inner_width - 2 * MARGIN - 2
+        list_inner = list_box_width - 2
 
         lines: List[str] = []
-        lines.append("Marquee.tv")
-        lines.append("")
-        header_lines = render_header(self._header_data(), header_inner)
-        lines.extend(header_lines)
-        lines.append("")
+        lines.append("╔═ Marquee.tv " + "═" * (OUTER_WIDTH - cell_len("╔═ Marquee.tv ") - 1) + "╗")
 
+        label = f" {header_border_label(self.ad_hoc_mode)} "
+        lines.append("║ ┌" + label + "─" * (header_box_width - cell_len(label)) + "┐ ║")
+        for text in render_header(self._header_data(), header_inner):
+            lines.append("║ │ " + text + " │ ║")
+        lines.append("║ └" + "─" * header_box_width + "┘ ║")
+        lines.append("║" + " " * inner_width + "║")
+
+        list_label = " PRIORITY LIST "
+        lines.append(
+            "║" + " " * MARGIN + "┌" + list_label
+            + "─" * (list_box_width - cell_len(list_label)) + "┐" + " " * MARGIN + "║"
+        )
         rows = self._row_data()
         for i, row in enumerate(rows):
-            width = inner_width if i == self.nav.index else inner_width - 2 * MARGIN
-            collapsed = render_row_collapsed(row, width)
-            prefix = "> " if i == self.nav.index else "  "
-            lines.append(prefix + collapsed)
             if i == self.nav.index:
-                lines.append("  " + render_row_expanded_detail(row, inner_width - 2))
+                collapsed = render_row_collapsed(row, inner_width - 3)
+                lines.append("║▶ " + collapsed + " ║")
+                detail = render_row_expanded_detail(row, inner_width - 4)
+                lines.append("║  " + detail + "  ║")
+            else:
+                collapsed = render_row_collapsed(row, list_inner)
+                lines.append("║" + " " * MARGIN + "│ " + collapsed + " │" + " " * MARGIN + "║")
+        lines.append("║" + " " * MARGIN + "└" + "─" * list_box_width + "┘" + " " * MARGIN + "║")
+        lines.append("║" + " " * inner_width + "║")
+
+        footer = "(Q)uit  (S)tart  (X)Stop  (E)dit  (/)Ad-hoc  (I)nfo  ↑↓/jk Navigate  ⏎ Launch"
+        lines.append("║ " + set_cell_size(footer, inner_width - 2) + " ║")
+        lines.append("╚" + "═" * inner_width + "╝")
 
         self.query_one("#frame", Static).update("\n".join(lines))
 
