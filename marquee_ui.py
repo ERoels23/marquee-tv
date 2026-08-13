@@ -37,6 +37,7 @@ class MarqueeApp(App):
         Binding("slash", "ad_hoc_start", "Ad-hoc", show=False),
         Binding("escape", "ad_hoc_cancel", "Cancel", show=False),
         Binding("e", "edit_list", "Edit", show=False),
+        Binding("i", "toggle_info", "Info", show=False),
     ]
 
     def __init__(self):
@@ -52,6 +53,9 @@ class MarqueeApp(App):
         self.nav = ListNavigator(0)
         self.ad_hoc = AdHocFlow()
         self.one_shots: Dict[str, dict] = {}
+        self.info_visible = False
+        self.channel_bio: Optional[str] = None
+        self.quit_confirm = QuitConfirm()
 
     def compose(self) -> ComposeResult:
         yield Static(id="frame", markup=False)
@@ -192,6 +196,21 @@ class MarqueeApp(App):
     def render_frame(self) -> None:
         from rich.cells import cell_len, set_cell_size
 
+        if self.info_visible and self.current_stream:
+            info = self.live_streams.get(self.current_stream, {})
+            overlay = [
+                f"Marquee.tv — Info: {self.current_stream}",
+                "",
+                f"Title: {info.get('title', '(unknown)')}",
+                "",
+                "Channel bio:",
+                self.channel_bio or "(loading...)",
+                "",
+                "Press i to close",
+            ]
+            self.query_one("#frame", Static).update("\n".join(overlay))
+            return
+
         # Widths below are hand-tuned (not the plan's original formulas, which had
         # off-by-one/two errors) to keep every rendered line at exactly OUTER_WIDTH
         # cells — verify with rich.cells.cell_len if you touch these.
@@ -271,6 +290,33 @@ class MarqueeApp(App):
                 pass
         self.load_entries()
         self.render_frame()
+
+    def action_toggle_info(self) -> None:
+        if self.info_visible:
+            self.info_visible = False
+        else:
+            if not self.current_stream:
+                return
+            self.channel_bio = self._fetch_channel_bio(self.current_stream)
+            self.info_visible = True
+        self.render_frame()
+
+    def _fetch_channel_bio(self, streamer: str) -> str:
+        import subprocess as sp
+        try:
+            result = sp.run(
+                ["/usr/bin/twitch", "api", "get", "users", "-q", f"login={streamer}"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode != 0:
+                return "(unable to fetch channel bio)"
+            data = json.loads(result.stdout)
+            users = data.get('data', [])
+            if not users:
+                return "(no bio available)"
+            return users[0].get('description') or "(no bio set)"
+        except Exception:
+            return "(unable to fetch channel bio)"
 
     def start_service(self) -> None:
         """Placeholder — real daemon start/stop wiring (and the 's' binding that

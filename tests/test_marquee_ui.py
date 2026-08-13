@@ -314,3 +314,50 @@ async def test_e_survives_missing_editor_binary(tmp_path, monkeypatch):
         await pilot.pause()
         await pilot.press("e")  # should not crash
         assert len(app.entries) == 1  # reload still happened, list unchanged
+
+
+@pytest.mark.asyncio
+async def test_i_shows_overlay_with_title_and_bio(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "_fetch_channel_bio", lambda self, streamer: "A cool streamer bio")
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.current_stream = "alpha"
+        app.live_streams = {"alpha": {"title": "Playing games", "game": "g", "viewers": 1, "started_at": None}}
+        await pilot.press("i")
+        frame = app.query_one("#frame")
+        assert "Playing games" in frame.content
+        assert "A cool streamer bio" in frame.content
+        await pilot.press("i")
+        frame2 = app.query_one("#frame")
+        assert app.info_visible is False
+        # overlay closed, back to normal view — bio text and overlay label are gone,
+        # even though the header legitimately still shows the (truncated) title for
+        # the currently-watched stream, so we can't assert "Playing games" is absent.
+        assert "A cool streamer bio" not in frame2.content
+        assert "Channel bio:" not in frame2.content
+        assert "PRIORITY LIST" in frame2.content
+
+
+@pytest.mark.asyncio
+async def test_i_does_nothing_when_no_current_stream(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.current_stream is None
+        await pilot.press("i")
+        assert app.info_visible is False
