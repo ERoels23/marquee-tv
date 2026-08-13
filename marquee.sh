@@ -11,11 +11,11 @@
 #   watch             Run in foreground (for debugging)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MAIN_SCRIPT="$SCRIPT_DIR/twitch_tv.py"
-UI_SCRIPT="$SCRIPT_DIR/twitchtv_ui.py"
+MAIN_SCRIPT="$SCRIPT_DIR/marquee_daemon.py"
+UI_SCRIPT="$SCRIPT_DIR/marquee_ui.py"
 STATUS_FILE="$SCRIPT_DIR/.status.json"
 CONTROL_FILE="$SCRIPT_DIR/.control"
-TMUX_SESSION="twitchtv"
+TMUX_SESSION="marquee"
 
 case "${1:-ui}" in
     ui)
@@ -23,7 +23,7 @@ case "${1:-ui}" in
         ;;
 
     start)
-        if pgrep -f "python3.*twitch_tv.py" > /dev/null 2>&1; then
+        if pgrep -f "python3.*marquee_daemon.py" > /dev/null 2>&1; then
             echo "TwitchTV is already running"
             exit 0
         fi
@@ -32,7 +32,7 @@ case "${1:-ui}" in
         nohup "$MAIN_SCRIPT" > "$SCRIPT_DIR/.log" 2>&1 &
         sleep 1
 
-        if pgrep -f "python3.*twitch_tv.py" > /dev/null 2>&1; then
+        if pgrep -f "python3.*marquee_daemon.py" > /dev/null 2>&1; then
             echo "✓ TwitchTV started successfully"
         else
             echo "✗ Failed to start TwitchTV"
@@ -41,9 +41,9 @@ case "${1:-ui}" in
         ;;
 
     stop)
-        if pgrep -f "python3.*twitch_tv.py" > /dev/null 2>&1; then
+        if pgrep -f "python3.*marquee_daemon.py" > /dev/null 2>&1; then
             echo "Stopping TwitchTV..."
-            pkill -f "python3.*twitch_tv.py"
+            pkill -f "python3.*marquee_daemon.py"
             sleep 1
             echo "✓ TwitchTV stopped"
         else
@@ -80,7 +80,7 @@ case "${1:-ui}" in
 
     *)
         cat << EOF
-TwitchTV Control Script
+Marquee.tv Control Script
 
 Usage: switchtv [command]
 
