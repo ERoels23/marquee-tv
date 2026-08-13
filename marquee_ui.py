@@ -2,6 +2,7 @@
 """Marquee.tv Textual UI — interactive dashboard for managing Twitch streams."""
 import json
 import subprocess
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -41,6 +42,7 @@ class MarqueeApp(App):
         self.stream_alive = False
         self.ad_hoc_mode: Optional[str] = None
         self.last_api_poll = 0.0
+        self._daemon_was_running = False
         self.nav = ListNavigator(0)
 
     def compose(self) -> ComposeResult:
@@ -87,13 +89,14 @@ class MarqueeApp(App):
             return {}
 
     def refresh_data(self, force: bool = False) -> None:
-        import time
         now = time.time()
         if not force and now - self.last_api_poll < API_UPDATE_INTERVAL:
-            self._load_status_file()
+            if self._daemon_was_running:
+                self._load_status_file()
             return
         self.last_api_poll = now
-        if self.daemon_running() and STATUS_FILE.exists():
+        self._daemon_was_running = self.daemon_running() and STATUS_FILE.exists()
+        if self._daemon_was_running:
             self._load_status_file()
         else:
             self.live_streams = self.poll_live_streams_from_api()
