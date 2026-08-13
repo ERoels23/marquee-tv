@@ -3,5 +3,6 @@ __pycache__/
 .status.json
 .control
 .log
+.mpv-*.sock
 .superpowers/
 .worktrees/

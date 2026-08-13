@@ -181,6 +181,8 @@ class TwitchTVController:
         )
 
         # Launch stream, with a per-streamer MPV IPC socket for live title updates
+        if self.current_socket_path is not None:
+            self.current_socket_path.unlink(missing_ok=True)
         socket_path = mpv_socket_path(streamer)
         socket_path.unlink(missing_ok=True)
         player_args = (
@@ -310,9 +312,11 @@ class TwitchTVController:
                         info = self.live_streams[self.current_stream]
                         if info['game'] != self.last_known_game or info['title'] != self.last_known_title:
                             new_title = build_mpv_title(self.current_stream, info['game'], info['title'])
-                            set_title(self.current_socket_path, new_title)
-                            self.last_known_game = info['game']
-                            self.last_known_title = info['title']
+                            if set_title(self.current_socket_path, new_title):
+                                self.last_known_game = info['game']
+                                self.last_known_title = info['title']
+                            else:
+                                print(f"[{datetime.now().strftime('%H:%M:%S')}] Failed to push MPV title update, will retry next poll")
 
                 current_live = set(self.live_streams.keys())
                 newly_live = current_live - self.previous_live_streams
