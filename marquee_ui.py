@@ -161,6 +161,9 @@ class MarqueeApp(App):
     def render_frame(self) -> None:
         from rich.cells import cell_len, set_cell_size
 
+        # Widths below are hand-tuned (not the plan's original formulas, which had
+        # off-by-one/two errors) to keep every rendered line at exactly OUTER_WIDTH
+        # cells — verify with rich.cells.cell_len if you touch these.
         inner_width = OUTER_WIDTH - 2
         header_box_width = inner_width - 4
         header_inner = header_box_width - 2
@@ -195,7 +198,7 @@ class MarqueeApp(App):
         lines.append("║" + " " * MARGIN + "└" + "─" * list_box_width + "┘" + " " * MARGIN + "║")
         lines.append("║" + " " * inner_width + "║")
 
-        footer = "(Q)uit  (S)tart  (X)Stop  (E)dit  (/)Ad-hoc  (I)nfo  ↑↓/jk Navigate  ⏎ Launch"
+        footer = "(Q)uit (S)tart (X)Stop (E)dit (/)Ad-hoc (I)nfo ↑↓/jk Nav ⏎ Launch"
         lines.append("║ " + set_cell_size(footer, inner_width - 2) + " ║")
         lines.append("╚" + "═" * inner_width + "╝")
 
