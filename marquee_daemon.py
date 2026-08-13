@@ -43,6 +43,24 @@ STREAMLINK_ARGS = [
 ]
 
 
+def parse_control_command(raw: str):
+    """Parse a raw .control file command.
+
+    Returns (streamer, mode) where mode is None for a legacy/plain switch,
+    or one of "override"/"temporary"/"oneshot". Returns None if unrecognized.
+    """
+    raw = raw.strip().lower()
+    if raw == "switch":
+        return ("", None)
+    if raw.startswith("switch:"):
+        rest = raw.split(":", 1)[1]
+        if ":" in rest:
+            streamer, mode = rest.split(":", 1)
+            return (streamer, mode)
+        return (rest, None)
+    return None
+
+
 class TwitchTVController:
     def __init__(self):
         self.priority_list: List[str] = []
@@ -51,6 +69,7 @@ class TwitchTVController:
         self.switching_soon: Optional[Dict] = None
         self.grace_period_start: Optional[datetime] = None
         self.running = True
+        self.manual_override: bool = False
         self.previous_live_streams: set = set()  # Track what was live last check
         self.live_streams: Dict[str, Dict] = {}  # Cache of live streams
         self.last_api_update: float = 0  # Timestamp of last API call
@@ -203,26 +222,19 @@ class TwitchTVController:
         print(f"(Or close mpv to switch now)")
         print(f"{'!'*60}\n")
 
-    def check_control_signal(self) -> Optional[str]:
+    def check_control_signal(self):
         """
         Check if user has signaled to switch.
-        Returns: streamer name (from UI), "" (legacy switch), or None (no signal)
+        Returns: (streamer, mode) tuple, or None if no signal.
+        mode is None for a plain/legacy switch, or "override"/"temporary"/"oneshot".
         """
         if CONTROL_FILE.exists():
             try:
                 with open(CONTROL_FILE, 'r') as f:
-                    command = f.read().strip().lower()
+                    command = f.read()
                 CONTROL_FILE.unlink()
-
-                # Handle new "switch:streamer" format from UI
-                if command.startswith("switch:"):
-                    return command.split(":", 1)[1]
-
-                # Handle legacy "switch" command (auto-switch to highest priority)
-                if command == "switch":
-                    return ""
-
-            except:
+                return parse_control_command(command)
+            except (OSError, ValueError):
                 pass
         return None
 
@@ -292,26 +304,30 @@ class TwitchTVController:
                 # If a stream is running, check for manual switches and higher priority streams
                 elif self.is_stream_alive():
                     # ALWAYS check for manual switch requests (user can switch anytime)
-                    switch_target = self.check_control_signal()
-                    if switch_target == "":
-                        # Legacy "switch" command - switch to highest priority now
-                        print("User requested immediate switch!")
-                        if highest_priority and highest_priority in self.live_streams:
-                            self.launch_stream(highest_priority, self.live_streams[highest_priority])
-                            self.switching_soon = None
-                            self.grace_period_start = None
-                    elif switch_target:
-                        # User requested switch to specific stream (from UI)
-                        target_lower = switch_target.lower()
-                        if target_lower in self.live_streams:
-                            print(f"User requested switch to {target_lower}")
-                            self.launch_stream(target_lower, self.live_streams[target_lower])
-                            # Clear auto-switch since user manually chose this stream
+                    control_signal = self.check_control_signal()
+                    if control_signal is not None:
+                        target, mode = control_signal
+                        if mode == "oneshot":
+                            pass  # UI handles one-shot streams entirely on its own
+                        elif target == "" and mode is None:
+                            # Legacy "switch" command - switch to highest priority now
+                            print("User requested immediate switch!")
+                            if highest_priority and highest_priority in self.live_streams:
+                                self.launch_stream(highest_priority, self.live_streams[highest_priority])
+                                self.manual_override = False
+                                self.switching_soon = None
+                                self.grace_period_start = None
+                        elif target and target in self.live_streams:
+                            print(f"User requested switch to {target} (mode={mode})")
+                            self.launch_stream(target, self.live_streams[target])
+                            self.manual_override = (mode == "override")
                             self.switching_soon = None
                             self.grace_period_start = None
 
                     # Check for auto-switch to higher priority stream (ONLY if it JUST came online)
-                    if highest_priority != self.current_stream and highest_priority is not None:
+                    if self.manual_override:
+                        pass  # user pinned an ad-hoc override stream; don't auto-switch away
+                    elif highest_priority != self.current_stream and highest_priority is not None:
                         # Check if this higher-priority stream is NEWLY live (not already live)
                         if highest_priority in newly_live:
                             # This stream just went live while we're watching something lower-priority
