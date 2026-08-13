@@ -298,6 +298,7 @@ class TwitchTVController:
                         self.launch_stream(highest_priority, self.live_streams[highest_priority])
                     else:
                         print(f"[{datetime.now().strftime('%H:%M:%S')}] No live streams in priority list")
+                    self.manual_override = False
                     self.switching_soon = None
                     self.grace_period_start = None
 
@@ -326,7 +327,8 @@ class TwitchTVController:
 
                     # Check for auto-switch to higher priority stream (ONLY if it JUST came online)
                     if self.manual_override:
-                        pass  # user pinned an ad-hoc override stream; don't auto-switch away
+                        if highest_priority != self.current_stream and highest_priority is not None:
+                            print(f"[{datetime.now().strftime('%H:%M:%S')}] manual_override active; suppressing auto-switch to {highest_priority}")
                     elif highest_priority != self.current_stream and highest_priority is not None:
                         # Check if this higher-priority stream is NEWLY live (not already live)
                         if highest_priority in newly_live:
