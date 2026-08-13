@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -140,3 +141,59 @@ async def test_adhoc_submit_shows_mode_picker_then_writes_control(tmp_path, monk
         await pilot.press("o")  # Override
         assert control_file.read_text() == "switch:gronk:override"
         assert app.ad_hoc_mode == "override"
+
+
+@pytest.mark.asyncio
+async def test_oneshot_does_not_touch_control_file_and_tracks_process(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\n")
+    control_file = tmp_path / ".control"
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr("marquee_ui.CONTROL_FILE", control_file)
+    monkeypatch.setattr("marquee_ui.SCRIPT_DIR", tmp_path)
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+
+    fake_process = mock.Mock()
+    fake_process.poll.return_value = None  # still running
+    monkeypatch.setattr("marquee_ui.subprocess.Popen", lambda *a, **kw: fake_process)
+    monkeypatch.setattr("marquee_ui.subprocess.run", lambda *a, **kw: mock.Mock(returncode=1))
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("slash")
+        for ch in "gronk":
+            await pilot.press(ch)
+        await pilot.press("enter")
+        await pilot.press("1")  # One-Shot
+
+        assert not control_file.exists()
+        assert "gronk" in app.one_shots
+        assert app.one_shots["gronk"]["process"] is fake_process
+        assert app.one_shots["gronk"]["timer"] is not None
+
+
+@pytest.mark.asyncio
+async def test_oneshot_poll_stops_timer_when_process_exits(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+
+    app = MarqueeApp()
+    fake_process = mock.Mock()
+    fake_process.poll.return_value = 0  # already exited
+    fake_timer = mock.Mock()
+    socket_path = tmp_path / ".mpv-oneshot-gronk.sock"
+    socket_path.touch()
+    app.one_shots["gronk"] = {"process": fake_process, "timer": fake_timer, "socket_path": socket_path}
+
+    app._poll_one_shot_title("gronk")
+
+    fake_timer.stop.assert_called_once()
+    assert "gronk" not in app.one_shots
+    assert not socket_path.exists()

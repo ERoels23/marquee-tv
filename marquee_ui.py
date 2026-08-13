@@ -50,6 +50,7 @@ class MarqueeApp(App):
         self._daemon_was_running = False
         self.nav = ListNavigator(0)
         self.ad_hoc = AdHocFlow()
+        self.one_shots: Dict[str, dict] = {}
 
     def compose(self) -> ComposeResult:
         yield Static(id="frame", markup=False)
@@ -93,6 +94,29 @@ class MarqueeApp(App):
             return live
         except Exception:
             return {}
+
+    def poll_single_stream_from_api(self, streamer: str) -> Optional[Dict]:
+        """Query Twitch for one streamer's live info, regardless of follow status."""
+        try:
+            result = subprocess.run(
+                ["/usr/bin/twitch", "api", "get", "streams", "-q", f"user_login={streamer}"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode != 0:
+                return None
+            data = json.loads(result.stdout)
+            streams = data.get('data', [])
+            if not streams:
+                return None
+            stream = streams[0]
+            return {
+                'title': stream['title'],
+                'game': stream['game_name'],
+                'viewers': stream['viewer_count'],
+                'started_at': stream.get('started_at'),
+            }
+        except Exception:
+            return None
 
     def refresh_data(self, force: bool = False) -> None:
         now = time.time()
@@ -300,7 +324,7 @@ class MarqueeApp(App):
             "--title", "{author} ::: {game} ::: {title}",
             f"twitch.tv/{streamer}", "best",
         ]
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         # This system's Chatterino build needs kill-before-relaunch (see marquee_daemon.py
         # launch_stream for the same pattern/reasoning) — apply it here too for consistency.
         subprocess.run(["pkill", "-x", "chatterino"], capture_output=True)
@@ -311,12 +335,22 @@ class MarqueeApp(App):
         subprocess.Popen(["chatterino", "-a", streamer], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.ad_hoc_mode = "oneshot"
         self.render_frame()
-        self.set_interval(API_UPDATE_INTERVAL, lambda: self._poll_one_shot_title(streamer, socket_path), pause=False)
+        timer = self.set_interval(API_UPDATE_INTERVAL, lambda: self._poll_one_shot_title(streamer), pause=False)
+        self.one_shots[streamer] = {"process": process, "timer": timer, "socket_path": socket_path}
 
-    def _poll_one_shot_title(self, streamer: str, socket_path: Path) -> None:
-        info = self.poll_live_streams_from_api().get(streamer)
+    def _poll_one_shot_title(self, streamer: str) -> None:
+        entry = self.one_shots.get(streamer)
+        if entry is None:
+            return
+        if entry["process"].poll() is not None:
+            # streamlink/mpv process has exited — stop polling and clean up
+            entry["timer"].stop()
+            entry["socket_path"].unlink(missing_ok=True)
+            del self.one_shots[streamer]
+            return
+        info = self.poll_single_stream_from_api(streamer)
         if info:
-            set_title(socket_path, build_mpv_title(streamer, info['game'], info['title']))
+            set_title(entry["socket_path"], build_mpv_title(streamer, info['game'], info['title']))
 
 
 if __name__ == "__main__":
