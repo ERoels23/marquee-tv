@@ -13,6 +13,8 @@ from textual.widgets import Static
 from priority_list import parse_streamers_file, StreamerEntry
 from marquee_model import ListNavigator, AdHocFlow, AdHocFlowState, AdHocMode, QuitConfirm
 from marquee_render import HeaderData, RowData, render_header, render_row_collapsed, render_row_expanded_detail, header_border_label
+from mpv_ipc import set_title
+from ui_format import build_mpv_title
 
 SCRIPT_DIR = Path(__file__).parent
 STREAMERS_FILE = SCRIPT_DIR / "streamers.txt"
@@ -32,6 +34,8 @@ class MarqueeApp(App):
         Binding("up,k", "move_up", "Up", show=False),
         Binding("down,j", "move_down", "Down", show=False),
         Binding("enter", "launch", "Launch", show=False),
+        Binding("slash", "ad_hoc_start", "Ad-hoc", show=False),
+        Binding("escape", "ad_hoc_cancel", "Cancel", show=False),
     ]
 
     def __init__(self):
@@ -45,6 +49,7 @@ class MarqueeApp(App):
         self.last_api_poll = 0.0
         self._daemon_was_running = False
         self.nav = ListNavigator(0)
+        self.ad_hoc = AdHocFlow()
 
     def compose(self) -> ComposeResult:
         yield Static(id="frame", markup=False)
@@ -221,6 +226,97 @@ class MarqueeApp(App):
             f.write(f"switch:{streamer}")
         self.ad_hoc_mode = None
         self.render_frame()
+
+    def action_ad_hoc_start(self) -> None:
+        self.ad_hoc.start()
+        self.render_frame()
+
+    def action_ad_hoc_cancel(self) -> None:
+        self.ad_hoc.cancel()
+        self.render_frame()
+
+    def start_service(self) -> None:
+        """Placeholder — real daemon start/stop wiring (and the 's' binding that
+        calls this) lands in Task 22. Exists now only so tests can monkeypatch it."""
+        pass
+
+    async def on_key(self, event) -> None:
+        if self.ad_hoc.state == AdHocFlowState.TYPING:
+            event.stop()
+            event.prevent_default()
+            if event.key == "escape":
+                self.ad_hoc.cancel()
+            elif event.key == "enter":
+                self.ad_hoc.submit_name()
+            elif event.key == "backspace":
+                self.ad_hoc.backspace()
+            elif event.character and event.character.isprintable():
+                self.ad_hoc.type_char(event.character)
+            self.render_frame()
+        elif self.ad_hoc.state == AdHocFlowState.MODE_SELECT:
+            event.stop()
+            event.prevent_default()
+            if event.key == "escape":
+                self.ad_hoc.cancel()
+                self.render_frame()
+                return
+            key = event.key.lower()
+            mode = None
+            if key == "o":
+                mode = AdHocMode.OVERRIDE
+            elif key == "t":
+                mode = AdHocMode.TEMPORARY
+            elif key == "1":
+                mode = AdHocMode.ONESHOT
+            if mode is not None:
+                result = self.ad_hoc.choose_mode(mode)
+                if result:
+                    streamer, chosen_mode = result
+                    self.launch_ad_hoc(streamer, chosen_mode)
+            self.render_frame()
+
+    def launch_ad_hoc(self, streamer: str, mode) -> None:
+        if mode == AdHocMode.ONESHOT:
+            self.spawn_one_shot(streamer)
+            return
+        with open(CONTROL_FILE, 'w') as f:
+            f.write(f"switch:{streamer}:{mode.value}")
+        self.ad_hoc_mode = mode.value
+        self.render_frame()
+
+    def spawn_one_shot(self, streamer: str) -> None:
+        """Launch a fully independent streamlink/mpv process, untracked by the daemon."""
+        socket_path = SCRIPT_DIR / f".mpv-oneshot-{streamer}.sock"
+        socket_path.unlink(missing_ok=True)
+        player_args = (
+            "--profile=twitch --volume=75 --force-seekable=yes "
+            "--demuxer-lavf-o=fflags=+genpts+discardcorrupt "
+            f"--input-ipc-server={socket_path}"
+        )
+        cmd = [
+            "streamlink", "--player", "mpv",
+            "--player-args", player_args,
+            "--hls-live-edge", "3", "--twitch-low-latency",
+            "--title", "{author} ::: {game} ::: {title}",
+            f"twitch.tv/{streamer}", "best",
+        ]
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # This system's Chatterino build needs kill-before-relaunch (see marquee_daemon.py
+        # launch_stream for the same pattern/reasoning) — apply it here too for consistency.
+        subprocess.run(["pkill", "-x", "chatterino"], capture_output=True)
+        for _ in range(20):
+            if subprocess.run(["pgrep", "-x", "chatterino"], capture_output=True).returncode != 0:
+                break
+            time.sleep(0.1)
+        subprocess.Popen(["chatterino", "-a", streamer], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.ad_hoc_mode = "oneshot"
+        self.render_frame()
+        self.set_interval(API_UPDATE_INTERVAL, lambda: self._poll_one_shot_title(streamer, socket_path), pause=False)
+
+    def _poll_one_shot_title(self, streamer: str, socket_path: Path) -> None:
+        info = self.poll_live_streams_from_api().get(streamer)
+        if info:
+            set_title(socket_path, build_mpv_title(streamer, info['game'], info['title']))
 
 
 if __name__ == "__main__":
