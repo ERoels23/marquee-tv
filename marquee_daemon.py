@@ -15,6 +15,8 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 import threading
 
+from priority_list import parse_streamers_file, usernames as pl_usernames
+
 # Configuration
 SCRIPT_DIR = Path(__file__).parent
 STREAMERS_FILE = SCRIPT_DIR / "streamers.txt"
@@ -60,11 +62,8 @@ class TwitchTVController:
             print("Please create streamers.txt with one streamer per line")
             sys.exit(1)
 
-        with open(STREAMERS_FILE, 'r') as f:
-            self.priority_list = [
-                line.strip().lower().split('|')[0].strip()
-                for line in f if line.strip() and not line.startswith('#')
-            ]
+        entries = parse_streamers_file(STREAMERS_FILE)
+        self.priority_list = pl_usernames(entries)
 
         if not self.priority_list:
             print("ERROR: streamers.txt is empty!")
