@@ -1,12 +1,12 @@
 [Unit]
-Description=TwitchTV Automatic Stream Watcher
+Description=Marquee.tv Automatic Stream Watcher
 Documentation=file:///mnt/Wrestler_Ted/claudes_room/TwitchTV/README.md
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/mnt/Wrestler_Ted/claudes_room/TwitchTV/twitch_tv.py
+ExecStart=/mnt/Wrestler_Ted/claudes_room/TwitchTV/marquee_daemon.py
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
