@@ -54,6 +54,7 @@ class TwitchTVController:
         self.live_streams: Dict[str, Dict] = {}  # Cache of live streams
         self.last_api_update: float = 0  # Timestamp of last API call
         self.load_priority_list()
+        self._streamers_mtime = STREAMERS_FILE.stat().st_mtime
 
     def load_priority_list(self):
         """Load and validate streamers priority list"""
@@ -70,6 +71,20 @@ class TwitchTVController:
             sys.exit(1)
 
         print(f"Loaded {len(self.priority_list)} streamers from priority list")
+
+    def maybe_reload_priority_list(self):
+        """Reload streamers.txt if it changed on disk since the last check."""
+        try:
+            mtime = STREAMERS_FILE.stat().st_mtime
+        except FileNotFoundError:
+            return
+        if mtime != self._streamers_mtime:
+            self._streamers_mtime = mtime
+            entries = parse_streamers_file(STREAMERS_FILE)
+            new_list = pl_usernames(entries)
+            if new_list:
+                self.priority_list = new_list
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Reloaded priority list ({len(new_list)} streamers)")
 
     def get_live_streams(self) -> Dict[str, Dict]:
         """
@@ -229,6 +244,7 @@ class TwitchTVController:
 
         while self.running:
             try:
+                self.maybe_reload_priority_list()
                 # Only query API every API_UPDATE_INTERVAL seconds
                 current_time = time.time()
                 if current_time - self.last_api_update >= API_UPDATE_INTERVAL:
