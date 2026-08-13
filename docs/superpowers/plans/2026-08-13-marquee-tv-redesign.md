@@ -1186,6 +1186,15 @@ with:
         )
 ```
 
+> **Amended after manual testing:** on this system's Chatterino build (2.5.5-9), `-a` does not
+> activate a tab in an already-running window — it spawns a brand-new process/window every
+> call, leaving old ones open. There's no tab-activation IPC available. The implemented fix
+> instead does `subprocess.run(["pkill", "-x", "chatterino"], capture_output=True)` right
+> before the `Popen(["chatterino", "-a", streamer], ...)` call, closing any existing instance
+> first. Chatterino restores its previously-open tabs on launch, so the net effect (all
+> previously-viewed channels' tabs present, new one activated, single window) still matches
+> the original intent. See the design spec's "Chatterino tab sync" section for details.
+
 - [ ] **Step 2: Manually verify**
 
 ```bash
@@ -2197,6 +2206,13 @@ Import `AdHocFlowState` alongside the other `marquee_model` imports (already imp
             f"twitch.tv/{streamer}", "best",
         ]
         sp.Popen(cmd, stdout=sp.DEVNULL, stderr=sp.DEVNULL)
+        # Heads-up for whoever implements this task: Task 11 found that this system's
+        # Chatterino build (2.5.5-9) doesn't activate tabs via -a on an already-running
+        # window — it spawns a new process/window instead. Task 11's daemon-side fix was
+        # to pkill -x chatterino before this Popen call (tabs persist across restart, so
+        # the effect is the same). Consider whether this one-shot spawn should do the same
+        # for consistency before landing this task — see the design spec's "Chatterino tab
+        # sync" section and marquee_daemon.py's launch_stream() for the adopted pattern.
         sp.Popen(["chatterino", "-a", streamer], stdout=sp.DEVNULL, stderr=sp.DEVNULL)
         self.ad_hoc_mode = "oneshot"
         self.render_frame()

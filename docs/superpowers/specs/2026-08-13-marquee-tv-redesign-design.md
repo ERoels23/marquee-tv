@@ -49,7 +49,9 @@ Full rename, including files and the systemd unit:
 Each loop tick (existing 10s `CHECK_INTERVAL`), check the file's mtime. If changed, re-run `load_priority_list()`. No restart required.
 
 ### Chatterino tab sync
-Replace the current "launch Chatterino only if not already running" logic in `launch_stream()`: **always** call `chatterino -a <streamer>` after launching a stream. Chatterino's `--activate`/`-a` flag activates (or creates, if it doesn't exist) a tab for that channel in the already-running main window — no new window, no manual tab-switching. If Chatterino isn't running yet, this call starts it fresh with that tab open (existing behavior preserved as a side effect).
+Replace the current "launch Chatterino only if not already running" logic in `launch_stream()`: **always** call `chatterino -a <streamer>` after launching a stream, to activate (or create) a tab for that channel.
+
+**Revised after testing (this system's Chatterino build, 2.5.5-9):** `chatterino -a <channel>` does **not** activate a tab in an already-running window — it spawns an entirely separate new process/window every time, leaving old ones open. There's no tab-activation IPC available on this build. The adopted workaround: `pkill -x chatterino` any existing instance first, then launch fresh with `-a`. Chatterino persists its open tabs across restarts and restores them on next launch, so this still achieves "switch to this channel's tab" from the user's perspective (all previously-viewed channels' tabs are still there, with the new one now activated) without ever having two windows open simultaneously.
 
 ### Ad-hoc control protocol
 `.control` file format extends from `switch:<streamer>` to `switch:<streamer>:<mode>`, where `<mode>` is `override`, `temporary`, or `oneshot`.

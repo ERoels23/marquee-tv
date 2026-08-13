@@ -149,8 +149,11 @@ class TwitchTVController:
             except subprocess.TimeoutExpired:
                 self.current_process.kill()
 
-        # Activate (or create) this streamer's tab in the running Chatterino window.
-        # If Chatterino isn't running yet, this starts it with that tab open.
+        # This system's Chatterino build doesn't activate tabs in an already-running
+        # window via -a (spawns a new process instead) — so we close any existing
+        # instance first. Chatterino persists its open tabs across restarts, so this
+        # still achieves "switch to this channel's tab" from the user's perspective.
+        subprocess.run(["pkill", "-x", "chatterino"], capture_output=True)
         subprocess.Popen(
             ["chatterino", "-a", streamer],
             stdout=subprocess.DEVNULL,
