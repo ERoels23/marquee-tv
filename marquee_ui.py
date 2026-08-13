@@ -265,7 +265,10 @@ class MarqueeApp(App):
         import subprocess as sp
         editor = os.environ.get("EDITOR", "nvim")
         with self.suspend():
-            sp.run([editor, str(STREAMERS_FILE)])
+            try:
+                sp.run([editor, str(STREAMERS_FILE)])
+            except OSError:
+                pass
         self.load_entries()
         self.render_frame()
 

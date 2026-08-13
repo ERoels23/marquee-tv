@@ -282,3 +282,35 @@ async def test_e_opens_editor_and_reloads_list(tmp_path, monkeypatch):
         await pilot.press("e")
         assert len(app.entries) == 2  # reloaded after "editing"
         assert any(str(streamers_file) in call[0] for call in run_calls)
+
+
+@pytest.mark.asyncio
+async def test_e_survives_missing_editor_binary(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    # daemon_running also shells out via subprocess.run (pgrep); mock it directly
+    # so patching subprocess.run to always raise below doesn't trip it up too —
+    # this test is only about action_edit_list's error handling.
+    monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: False)
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def fake_suspend(self):
+        yield
+
+    def raise_not_found(*a, **kw):
+        raise FileNotFoundError("nonexistent-editor-binary")
+
+    monkeypatch.setattr(MarqueeApp, "suspend", fake_suspend)
+    monkeypatch.setattr("subprocess.run", raise_not_found)
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("e")  # should not crash
+        assert len(app.entries) == 1  # reload still happened, list unchanged
