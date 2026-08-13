@@ -44,3 +44,15 @@ def test_format_last_seen_unknown():
 
 def test_build_mpv_title():
     assert build_mpv_title("Jerma", "Just Chatting", "doing bits") == "Jerma ::: Just Chatting ::: doing bits"
+
+
+def test_truncate_text_handles_wide_glyphs():
+    from rich.cells import cell_len
+    result = truncate_text("hi 😀😀😀 title", 10)
+    assert cell_len(result) == 10
+    assert result.endswith("-")
+
+
+def test_format_last_seen_just_now():
+    now = datetime(2026, 8, 13, 12, 0, 30, tzinfo=timezone.utc)
+    assert format_last_seen("2026-08-13T12:00:00Z", now=now) == "just now"
