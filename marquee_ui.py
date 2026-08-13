@@ -31,6 +31,7 @@ class MarqueeApp(App):
     BINDINGS = [
         Binding("up,k", "move_up", "Up", show=False),
         Binding("down,j", "move_down", "Down", show=False),
+        Binding("enter", "launch", "Launch", show=False),
     ]
 
     def __init__(self):
@@ -210,6 +211,15 @@ class MarqueeApp(App):
 
     def action_move_down(self) -> None:
         self.nav.move_down()
+        self.render_frame()
+
+    def action_launch(self) -> None:
+        if not (0 <= self.nav.index < len(self.entries)):
+            return
+        streamer = self.entries[self.nav.index].username
+        with open(CONTROL_FILE, 'w') as f:
+            f.write(f"switch:{streamer}")
+        self.ad_hoc_mode = None
         self.render_frame()
 
 
