@@ -149,17 +149,13 @@ class TwitchTVController:
             except subprocess.TimeoutExpired:
                 self.current_process.kill()
 
-        # Launch Chatterino if not already running
-        subprocess.run(
-            ["pgrep", "-x", "chatterino"],
-            capture_output=True
+        # Activate (or create) this streamer's tab in the running Chatterino window.
+        # If Chatterino isn't running yet, this starts it with that tab open.
+        subprocess.Popen(
+            ["chatterino", "-a", streamer],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
         )
-        if subprocess.run(["pgrep", "-x", "chatterino"], capture_output=True).returncode != 0:
-            subprocess.Popen(
-                ["chatterino"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
 
         # Launch stream
         cmd = STREAMLINK_ARGS + [f"twitch.tv/{streamer}", "best"]
