@@ -84,10 +84,7 @@ def render_row_collapsed(row: RowData, width: int) -> str:
     viewers_text = format_viewers(row.viewers) if row.is_live and row.viewers is not None else ""
     right = f"{viewers_text} {_dot(row.is_live)}".strip() if viewers_text else _dot(row.is_live)
     left = f"{name}{game}"
-    max_left = max(0, width - cell_len(right) - 1)
-    left = truncate_text(left, max_left)
-    gap = max(1, width - cell_len(left) - cell_len(right))
-    return set_cell_size(f"{left}{' ' * gap}{right}", width)
+    return _justify(left, right, width)
 
 
 def render_row_expanded_detail(row: RowData, width: int) -> str:
