@@ -1874,11 +1874,21 @@ Expected: PASS (1 passed)
 ```
 Expected: TUI opens showing "Marquee.tv", an idle "No stream active" header, and the priority list rows from `streamers.txt`. Press `Ctrl+C` or `q`-then-nothing (no quit binding yet — use `Ctrl+C`) to exit. Note the row layout here is a simple stacked list, not yet the nested-box breakout design — that visual polish is intentionally deferred; this task's goal is a working data pipeline and render loop.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Remove the old curses UI it replaces**
+
+`marquee_ui.py` fully supersedes the old `twitchtv_ui.py` (curses-based UI) — nothing in the plan updates or references `twitchtv_ui.py` going forward, and `marquee.sh` (Task 14) already points `UI_SCRIPT` at `marquee_ui.py`. Leaving the old file in place would be dead code. Remove it:
+
+```bash
+git rm twitchtv_ui.py
+```
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add marquee_ui.py tests/test_marquee_ui.py
-git commit -m "feat: add marquee_ui Textual app skeleton with daemon-or-API data source"
+git commit -m "feat: add marquee_ui Textual app skeleton with daemon-or-API data source
+
+Removes the superseded twitchtv_ui.py (curses UI)."
 ```
 
 ---
