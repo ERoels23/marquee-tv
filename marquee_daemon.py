@@ -111,7 +111,8 @@ class TwitchTVController:
                 live_streams[streamer_name] = {
                     'title': stream['title'],
                     'game': stream['game_name'],
-                    'viewers': stream['viewer_count']
+                    'viewers': stream['viewer_count'],
+                    'started_at': stream.get('started_at'),
                 }
 
             return live_streams
@@ -227,7 +228,8 @@ class TwitchTVController:
             'current_stream': self.current_stream,
             'stream_alive': self.is_stream_alive(),
             'switching_soon': self.switching_soon,
-            'grace_period_remaining': None
+            'grace_period_remaining': None,
+            'live_streams': self.live_streams,
         }
 
         if self.grace_period_start:
