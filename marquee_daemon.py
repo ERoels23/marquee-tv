@@ -79,11 +79,11 @@ class TwitchTVController:
         except FileNotFoundError:
             return
         if mtime != self._streamers_mtime:
-            self._streamers_mtime = mtime
             entries = parse_streamers_file(STREAMERS_FILE)
             new_list = pl_usernames(entries)
             if new_list:
                 self.priority_list = new_list
+                self._streamers_mtime = mtime
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] Reloaded priority list ({len(new_list)} streamers)")
 
     def get_live_streams(self) -> Dict[str, Dict]:
