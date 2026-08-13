@@ -1,0 +1,23 @@
+# TwitchTV Priority List
+# One streamer per line, in order of preference
+# Lines starting with # are ignored (comments)
+# The script will launch the highest-priority currently-live streamer
+# and auto-switch when a higher-priority stream goes online
+#
+# Nicknames: append  |Nickname  after a username to give it a display name
+# Example:   northernlion|NL
+
+# Add your streamers below in priority order:
+jerma985|Jerma
+cosmonaut_variety_hour|Cosmonaut
+northernlion|Northernlion
+shaun_vids|Shaun
+chiblee|Chiblee
+paleostream|Paleostream
+alveussanctuary|Alveus
+theworldbirdsanctuary|WBS
+crittervision|Critters
+dumbdog|Apollo
+dunkstream|Dunkey
+hcjustin|Justin
+bobross|Bob

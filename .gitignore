@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.status.json
+.control
+.log
+.superpowers/
