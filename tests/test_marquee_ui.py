@@ -242,3 +242,43 @@ async def test_oneshot_poll_updates_title_when_process_still_running(tmp_path, m
     assert "gronk" in set_title_calls[0][1]
     assert "Just Chatting" in set_title_calls[0][1]
     assert "gronk" in app.one_shots  # entry NOT removed, process still running
+
+
+@pytest.mark.asyncio
+async def test_e_opens_editor_and_reloads_list(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def fake_suspend(self):
+        # simulate the user editing the file while "suspended"
+        streamers_file.write_text("alpha\nbeta\n")
+        yield
+
+    run_calls = []
+
+    def fake_run(*a, **kw):
+        run_calls.append(a)
+        return mock.Mock(returncode=1, stdout="")  # e.g. pgrep-style "not found"
+
+    monkeypatch.setattr(MarqueeApp, "suspend", fake_suspend)
+    # action_edit_list does `import subprocess as sp` locally, but that local name
+    # still refers to the one global `subprocess` module object, so patching
+    # subprocess.run globally is what actually takes effect here. This also
+    # intercepts other subprocess.run call sites (e.g. daemon_running's pgrep),
+    # so the fake must return a plausible CompletedProcess-like object for those too.
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert len(app.entries) == 1
+        await pilot.press("e")
+        assert len(app.entries) == 2  # reloaded after "editing"
+        assert any(str(streamers_file) in call[0] for call in run_calls)

@@ -36,6 +36,7 @@ class MarqueeApp(App):
         Binding("enter", "launch", "Launch", show=False),
         Binding("slash", "ad_hoc_start", "Ad-hoc", show=False),
         Binding("escape", "ad_hoc_cancel", "Cancel", show=False),
+        Binding("e", "edit_list", "Edit", show=False),
     ]
 
     def __init__(self):
@@ -257,6 +258,15 @@ class MarqueeApp(App):
 
     def action_ad_hoc_cancel(self) -> None:
         self.ad_hoc.cancel()
+        self.render_frame()
+
+    def action_edit_list(self) -> None:
+        import os
+        import subprocess as sp
+        editor = os.environ.get("EDITOR", "nvim")
+        with self.suspend():
+            sp.run([editor, str(STREAMERS_FILE)])
+        self.load_entries()
         self.render_frame()
 
     def start_service(self) -> None:
