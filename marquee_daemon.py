@@ -22,6 +22,7 @@ SCRIPT_DIR = Path(__file__).parent
 STREAMERS_FILE = SCRIPT_DIR / "streamers.txt"
 STATUS_FILE = SCRIPT_DIR / ".status.json"
 CONTROL_FILE = SCRIPT_DIR / ".control"
+LAST_SEEN_FILE = SCRIPT_DIR / ".last_seen.json"
 CHECK_INTERVAL = 10  # Check for new streams and control signals every 10 seconds
 API_UPDATE_INTERVAL = 60  # Only query Twitch API every 60 seconds (rate limiting)
 GRACE_PERIOD = 600  # 10 minutes before auto-switching (in seconds)
@@ -53,6 +54,7 @@ class TwitchTVController:
         self.previous_live_streams: set = set()  # Track what was live last check
         self.live_streams: Dict[str, Dict] = {}  # Cache of live streams
         self.last_api_update: float = 0  # Timestamp of last API call
+        self.last_seen: Dict[str, str] = self._load_last_seen()
         self.load_priority_list()
         self._streamers_mtime = STREAMERS_FILE.stat().st_mtime
 
@@ -221,6 +223,19 @@ class TwitchTVController:
                 pass
         return None
 
+    def _load_last_seen(self) -> Dict[str, str]:
+        if LAST_SEEN_FILE.exists():
+            try:
+                with open(LAST_SEEN_FILE, 'r') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, OSError):
+                return {}
+        return {}
+
+    def _save_last_seen(self):
+        with open(LAST_SEEN_FILE, 'w') as f:
+            json.dump(self.last_seen, f)
+
     def save_status(self):
         """Save current status to JSON file for querying"""
         status = {
@@ -252,6 +267,10 @@ class TwitchTVController:
                 if current_time - self.last_api_update >= API_UPDATE_INTERVAL:
                     self.live_streams = self.get_live_streams()
                     self.last_api_update = current_time
+                    now_iso = datetime.now().isoformat()
+                    for streamer in self.live_streams:
+                        self.last_seen[streamer] = now_iso
+                    self._save_last_seen()
 
                 current_live = set(self.live_streams.keys())
                 newly_live = current_live - self.previous_live_streams
