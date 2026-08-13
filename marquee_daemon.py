@@ -16,6 +16,8 @@ from typing import Optional, List, Dict
 import threading
 
 from priority_list import parse_streamers_file, usernames as pl_usernames
+from mpv_ipc import set_title
+from ui_format import build_mpv_title
 
 # Configuration
 SCRIPT_DIR = Path(__file__).parent
@@ -30,17 +32,9 @@ GRACE_PERIOD = 600  # 10 minutes before auto-switching (in seconds)
 # Twitch API user ID (from your twitchlive function)
 TWITCH_USER_ID = "60132775"
 
-# Streamlink player args (from twitchll)
-STREAMLINK_ARGS = [
-    "streamlink",
-    "--loglevel", "debug",
-    "--player-verbose",
-    "--player", "mpv",
-    "--player-args", "--profile=twitch --volume=75 --force-seekable=yes --demuxer-lavf-o=fflags=+genpts+discardcorrupt",
-    "--hls-live-edge", "3",
-    "--twitch-low-latency",
-    "--title", "{author} ::: {game} ::: {title}",
-]
+
+def mpv_socket_path(streamer: str) -> Path:
+    return SCRIPT_DIR / f".mpv-{streamer}.sock"
 
 
 def parse_control_command(raw: str):
@@ -73,6 +67,9 @@ class TwitchTVController:
         self.previous_live_streams: set = set()  # Track what was live last check
         self.live_streams: Dict[str, Dict] = {}  # Cache of live streams
         self.last_api_update: float = 0  # Timestamp of last API call
+        self.current_socket_path: Optional[Path] = None
+        self.last_known_game: Optional[str] = None
+        self.last_known_title: Optional[str] = None
         self.last_seen: Dict[str, str] = self._load_last_seen()
         self.load_priority_list()
         self._streamers_mtime = STREAMERS_FILE.stat().st_mtime
@@ -183,8 +180,28 @@ class TwitchTVController:
             stderr=subprocess.DEVNULL
         )
 
-        # Launch stream
-        cmd = STREAMLINK_ARGS + [f"twitch.tv/{streamer}", "best"]
+        # Launch stream, with a per-streamer MPV IPC socket for live title updates
+        socket_path = mpv_socket_path(streamer)
+        socket_path.unlink(missing_ok=True)
+        player_args = (
+            "--profile=twitch --volume=75 --force-seekable=yes "
+            "--demuxer-lavf-o=fflags=+genpts+discardcorrupt "
+            f"--input-ipc-server={socket_path}"
+        )
+        cmd = [
+            "streamlink",
+            "--loglevel", "debug",
+            "--player-verbose",
+            "--player", "mpv",
+            "--player-args", player_args,
+            "--hls-live-edge", "3",
+            "--twitch-low-latency",
+            "--title", "{author} ::: {game} ::: {title}",
+            f"twitch.tv/{streamer}", "best",
+        ]
+        self.current_socket_path = socket_path
+        self.last_known_game = stream_info.get('game') if stream_info else None
+        self.last_known_title = stream_info.get('title') if stream_info else None
 
         print(f"\n{'='*60}")
         print(f"Launching: {streamer}")
@@ -286,6 +303,16 @@ class TwitchTVController:
                     for streamer in self.live_streams:
                         self.last_seen[streamer] = now_iso
                     self._save_last_seen()
+
+                    if (self.current_stream and self.is_stream_alive()
+                            and self.current_stream in self.live_streams
+                            and self.current_socket_path):
+                        info = self.live_streams[self.current_stream]
+                        if info['game'] != self.last_known_game or info['title'] != self.last_known_title:
+                            new_title = build_mpv_title(self.current_stream, info['game'], info['title'])
+                            set_title(self.current_socket_path, new_title)
+                            self.last_known_game = info['game']
+                            self.last_known_title = info['title']
 
                 current_live = set(self.live_streams.keys())
                 newly_live = current_live - self.previous_live_streams
