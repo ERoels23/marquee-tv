@@ -336,6 +336,8 @@ class MarqueeApp(App):
         self.ad_hoc_mode = "oneshot"
         self.render_frame()
         timer = self.set_interval(API_UPDATE_INTERVAL, lambda: self._poll_one_shot_title(streamer), pause=False)
+        if streamer in self.one_shots:
+            self.one_shots[streamer]["timer"].stop()
         self.one_shots[streamer] = {"process": process, "timer": timer, "socket_path": socket_path}
 
     def _poll_one_shot_title(self, streamer: str) -> None:

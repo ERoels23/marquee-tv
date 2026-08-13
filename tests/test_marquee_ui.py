@@ -197,3 +197,48 @@ async def test_oneshot_poll_stops_timer_when_process_exits(tmp_path, monkeypatch
     fake_timer.stop.assert_called_once()
     assert "gronk" not in app.one_shots
     assert not socket_path.exists()
+
+
+def test_poll_single_stream_from_api_queries_by_user_login(monkeypatch):
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return mock.Mock(returncode=0, stdout='{"data": [{"title": "t", "game_name": "g", "viewer_count": 5, "started_at": "2026-01-01T00:00:00Z"}]}')
+
+    monkeypatch.setattr("marquee_ui.subprocess.run", fake_run)
+    app = MarqueeApp.__new__(MarqueeApp)  # no need for full init for this pure method
+    result = app.poll_single_stream_from_api("somestreamer")
+
+    assert "user_login=somestreamer" in captured["cmd"]
+    assert "/streams/followed" not in " ".join(captured["cmd"])
+    assert result == {"title": "t", "game": "g", "viewers": 5, "started_at": "2026-01-01T00:00:00Z"}
+
+
+@pytest.mark.asyncio
+async def test_oneshot_poll_updates_title_when_process_still_running(tmp_path, monkeypatch):
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", tmp_path / "streamers.txt")
+    (tmp_path / "streamers.txt").write_text("alpha\n")
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+
+    app = MarqueeApp()
+    fake_process = mock.Mock()
+    fake_process.poll.return_value = None  # still running
+    socket_path = tmp_path / ".mpv-oneshot-gronk.sock"
+    app.one_shots["gronk"] = {"process": fake_process, "timer": mock.Mock(), "socket_path": socket_path}
+
+    monkeypatch.setattr(app, "poll_single_stream_from_api", lambda streamer: {
+        "title": "live title", "game": "Just Chatting", "viewers": 10, "started_at": None
+    })
+    set_title_calls = []
+    monkeypatch.setattr("marquee_ui.set_title", lambda sock, title: set_title_calls.append((sock, title)))
+
+    app._poll_one_shot_title("gronk")
+
+    assert len(set_title_calls) == 1
+    assert set_title_calls[0][0] == socket_path
+    assert "gronk" in set_title_calls[0][1]
+    assert "Just Chatting" in set_title_calls[0][1]
+    assert "gronk" in app.one_shots  # entry NOT removed, process still running
