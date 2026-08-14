@@ -39,23 +39,24 @@ MARGIN = 2
 BORDER_COLOR = "#74c7ec"  # Sapphire — outer box, NOW WATCHING/PRIORITY LIST boxes, labels, footer
 HIGHLIGHT_STYLE = "bold #1e1e2e on #b4befe"  # dark text on Lavender bar
 
-_MODAL_PANEL_CSS = f"""
-    align: center middle;
-
-    & > Vertical {{
-        width: auto;
-        height: auto;
-        max-width: 80%;
-        border: round {BORDER_COLOR};
-        padding: 1 2;
-    }}
-"""
-
-
 class QuitConfirmModal(ModalScreen[bool]):
     """Centered popup asking whether to quit and stop the daemon."""
 
-    DEFAULT_CSS = f"QuitConfirmModal {{{_MODAL_PANEL_CSS}}}"
+    # width: auto on a Vertical panel doesn't reliably measure Static children
+    # in this Textual version (they resolve to a degenerate 0-width box) — use
+    # a definite width instead so the layout actually has something to size
+    # the children against.
+    DEFAULT_CSS = f"""
+    QuitConfirmModal {{
+        align: center middle;
+    }}
+    QuitConfirmModal > Vertical {{
+        width: 42;
+        height: auto;
+        border: round {BORDER_COLOR};
+        padding: 1 2;
+    }}
+    """
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -74,7 +75,19 @@ class QuitConfirmModal(ModalScreen[bool]):
 class InfoModal(ModalScreen):
     """Centered popup showing the full title and channel bio for a stream."""
 
-    DEFAULT_CSS = f"InfoModal {{{_MODAL_PANEL_CSS}}}"
+    DEFAULT_CSS = f"""
+    InfoModal {{
+        align: center middle;
+    }}
+    InfoModal > Vertical {{
+        width: 70%;
+        min-width: 42;
+        max-width: 100;
+        height: auto;
+        border: round {BORDER_COLOR};
+        padding: 1 2;
+    }}
+    """
 
     def __init__(self, streamer: str, title: str) -> None:
         super().__init__()
@@ -106,6 +119,18 @@ class InfoModal(ModalScreen):
 
 
 class MarqueeApp(App):
+    # Screen defaults to overflow-y: auto, which reserves a scrollbar gutter
+    # (2 columns) whenever content is taller than the terminal — e.g. once the
+    # priority list has enough entries. That silently narrows the #frame
+    # widget's actual width below self._terminal_width, so every hand-sized
+    # line becomes too wide for its box and wraps, breaking the whole layout.
+    # Disable it: content that doesn't fit vertically is clipped, not scrolled.
+    CSS = """
+    Screen {
+        overflow-y: hidden;
+    }
+    """
+
     BINDINGS = [
         Binding("up,k", "move_up", "Up", show=False),
         Binding("down,j", "move_down", "Down", show=False),
@@ -376,7 +401,9 @@ class MarqueeApp(App):
                     ("║", B), ("▶ " + collapsed + " ", HIGHLIGHT_STYLE), ("║", B),
                 ))
                 detail = render_row_expanded_detail(row, inner_width - 4)
-                lines.append(self._styled_line(("║  ", B), (detail, None), ("  ║", B)))
+                lines.append(self._styled_line(
+                    ("║", B), ("  " + detail + "  ", HIGHLIGHT_STYLE), ("║", B),
+                ))
             else:
                 collapsed = render_row_collapsed(row, list_inner)
                 lines.append(self._styled_line(
@@ -469,6 +496,7 @@ class MarqueeApp(App):
         import subprocess as sp
         sp.run([str(SCRIPT_DIR / "marquee.sh"), "stop"], capture_output=True)
         sp.run(["pkill", "-f", "mpv"], capture_output=True)
+        sp.run(["pkill", "-x", "chatterino"], capture_output=True)
 
     def action_start_service(self) -> None:
         if not self.daemon_running():
@@ -486,7 +514,10 @@ class MarqueeApp(App):
         def handle_result(confirmed: bool) -> None:
             if confirmed:
                 if self.daemon_running():
-                    self.stop_service()
+                    self.stop_service()  # also kills chatterino
+                else:
+                    import subprocess as sp
+                    sp.run(["pkill", "-x", "chatterino"], capture_output=True)
                 self.exit()
 
         self.push_screen(QuitConfirmModal(), handle_result)

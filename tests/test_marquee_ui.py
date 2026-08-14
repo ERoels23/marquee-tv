@@ -51,6 +51,30 @@ async def test_frame_width_tracks_terminal_and_updates_on_resize(tmp_path, monke
         assert cell_len(first_line) == 160
 
 
+@pytest.mark.asyncio
+async def test_frame_width_matches_widget_width_when_content_taller_than_terminal(tmp_path, monkeypatch):
+    # Screen defaults to overflow-y: auto, which reserves a scrollbar gutter
+    # once content is taller than the terminal (e.g. a long priority list on a
+    # short terminal) — that silently narrows the #frame widget below the
+    # width render_frame() assumed, causing every line to wrap and the whole
+    # box layout to break. Regression test for that scenario specifically.
+    from rich.cells import cell_len
+
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("\n".join(f"streamer{i}" for i in range(15)) + "\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+
+    app = MarqueeApp()
+    async with app.run_test(size=(100, 24)) as pilot:  # content renders taller than 24 rows
+        await pilot.pause()
+        frame = app.query_one("#frame")
+        first_line = frame.content.split("\n")[0].plain
+        assert cell_len(first_line) == frame.size.width == 100
+
+
 def test_manual_switch_sets_manual_transition(tmp_path, monkeypatch):
     status_file = tmp_path / ".status.json"
     monkeypatch.setattr("marquee_ui.STATUS_FILE", status_file)
@@ -440,8 +464,14 @@ async def test_i_shows_overlay_with_title_and_bio(tmp_path, monkeypatch):
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert isinstance(app.screen, InfoModal)
-        assert "Playing games" in app.screen.query_one("#info-title", Static).content
-        assert "A cool streamer bio" in app.screen.query_one("#bio", Static).content
+        title_widget = app.screen.query_one("#info-title", Static)
+        bio_widget = app.screen.query_one("#bio", Static)
+        assert "Playing games" in title_widget.content
+        assert "A cool streamer bio" in bio_widget.content
+        # Regression: width:auto on the panel Vertical previously collapsed
+        # every child to a 0x0 box (blank popup, no visible text at all).
+        assert title_widget.size.width > 0
+        assert bio_widget.size.width > 0
         await pilot.press("i")
         await pilot.pause()
         assert not isinstance(app.screen, InfoModal)
@@ -510,6 +540,8 @@ async def test_quit_requires_confirmation(tmp_path, monkeypatch):
 
     exited = {"called": False}
     monkeypatch.setattr(MarqueeApp, "exit", lambda self, *a, **kw: exited.__setitem__("called", True))
+    run_calls = []
+    monkeypatch.setattr("subprocess.run", lambda *a, **kw: run_calls.append(a) or mock.Mock(returncode=1))
 
     app = MarqueeApp()
     async with app.run_test() as pilot:
@@ -518,6 +550,10 @@ async def test_quit_requires_confirmation(tmp_path, monkeypatch):
         await pilot.pause()
         assert exited["called"] is False  # just opens the confirm modal
         assert isinstance(app.screen, QuitConfirmModal)
+        # Regression: width:auto on the panel Vertical previously collapsed
+        # every child to a 0x0 box (blank popup, no visible text at all).
+        for static in app.screen.query(Static):
+            assert static.size.width > 0
 
         await pilot.press("escape")  # cancel — should not exit
         await pilot.pause()
@@ -529,6 +565,8 @@ async def test_quit_requires_confirmation(tmp_path, monkeypatch):
         await pilot.press("enter")  # confirm
         await pilot.pause()
         assert exited["called"] is True
+        # daemon wasn't running, but quitting must still kill chatterino
+        assert any(call[0][:2] == ["pkill", "-x"] and "chatterino" in call[0] for call in run_calls)
 
 
 @pytest.mark.asyncio
@@ -549,6 +587,29 @@ async def test_start_service_noop_when_already_running(tmp_path, monkeypatch):
         await pilot.pause()
         await pilot.press("s")
         assert start_calls["count"] == 0  # already running, should not call start_service again
+
+
+@pytest.mark.asyncio
+async def test_stop_service_kills_mpv_and_chatterino(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: True)
+
+    run_calls = []
+    monkeypatch.setattr("subprocess.run", lambda *a, **kw: run_calls.append(a) or mock.Mock(returncode=1))
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("x")
+
+        commands = [call[0] for call in run_calls]
+        assert any("mpv" in c for c in commands)
+        assert any(c[:2] == ["pkill", "-x"] and "chatterino" in c for c in commands)
 
 
 @pytest.mark.asyncio
