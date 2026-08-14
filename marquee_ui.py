@@ -33,6 +33,7 @@ TRANSITION_DURATION = 5.0
 PENDING_MANUAL_SWITCH_TIMEOUT = 30.0  # bounds how long a stale pending-switch can mislabel a later transition
 
 MIN_OUTER_WIDTH = 60  # floor below which the box layout starts breaking down
+MIN_OUTER_HEIGHT = 10  # floor below which there's no room to pad the border to fill height
 MARGIN = 2
 
 # Catppuccin Mocha accents (matches the user's terminal/desktop theme).
@@ -164,6 +165,7 @@ class MarqueeApp(App):
         self._pending_manual_switch: Optional[tuple] = None  # (streamer, monotonic_time)
         self.transition: Optional[Dict] = None  # {"kind": "auto"|"manual", "started": monotonic}
         self._terminal_width = MIN_OUTER_WIDTH
+        self._terminal_height = MIN_OUTER_HEIGHT
 
     def compose(self) -> ComposeResult:
         yield Static(id="frame", markup=False)
@@ -171,6 +173,7 @@ class MarqueeApp(App):
     def on_mount(self) -> None:
         self.load_entries()
         self._terminal_width = self.size.width
+        self._terminal_height = self.size.height
         self.refresh_data(force=True)
         self.render_frame()
         self.set_interval(REFRESH_INTERVAL, self.tick)
@@ -178,6 +181,7 @@ class MarqueeApp(App):
     def on_resize(self, event: events.Resize) -> None:
         # self.size lags a cycle behind inside this handler; event.size is current.
         self._terminal_width = event.size.width
+        self._terminal_height = event.size.height
         self.render_frame()
 
     def load_entries(self) -> None:
@@ -242,6 +246,7 @@ class MarqueeApp(App):
         if not force and now - self.last_api_poll < API_UPDATE_INTERVAL:
             if self._daemon_was_running:
                 self._load_status_file()
+            self._load_last_seen_file()  # cheap local file read — no reason to rate-limit it
             return
         self.last_api_poll = now
         self._daemon_was_running = self.daemon_running() and STATUS_FILE.exists()
@@ -412,6 +417,14 @@ class MarqueeApp(App):
         lines.append(Text("║" + " " * MARGIN + "└" + "─" * list_box_width + "┘" + " " * MARGIN + "║", style=B))
         lines.append(Text("║" + " " * inner_width + "║", style=B))
 
+        # Pad with blank bordered lines so the outer box reaches the bottom of
+        # the terminal instead of shrink-wrapping to just the priority list —
+        # footer + closing border still need to fit below this padding.
+        terminal_height = max(MIN_OUTER_HEIGHT, self._terminal_height)
+        padding_needed = terminal_height - len(lines) - 2
+        for _ in range(max(0, padding_needed)):
+            lines.append(Text("║" + " " * inner_width + "║", style=B))
+
         footer = "(Q)uit (S)tart (X)Stop (E)dit (/)Ad-hoc (I)nfo ↑↓/jk Nav ⏎ Launch"
         lines.append(Text("║ " + set_cell_size(footer, inner_width - 2) + " ║", style=B))
         lines.append(Text("╚" + "═" * inner_width + "╝", style=B))
@@ -433,6 +446,8 @@ class MarqueeApp(App):
         streamer = self.entries[self.nav.index].username
         with open(CONTROL_FILE, 'w') as f:
             f.write(f"switch:{streamer}")
+        if not self.daemon_running():
+            self.start_service()
         self.ad_hoc_mode = None
         self._pending_manual_switch = (streamer, time.monotonic())
         self.render_frame()
@@ -563,6 +578,8 @@ class MarqueeApp(App):
             return
         with open(CONTROL_FILE, 'w') as f:
             f.write(f"switch:{streamer}:{mode.value}")
+        if not self.daemon_running():
+            self.start_service()
         self.ad_hoc_mode = mode.value
         self._pending_manual_switch = (streamer, time.monotonic())
         self.render_frame()

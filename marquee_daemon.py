@@ -323,38 +323,44 @@ class TwitchTVController:
                 self.previous_live_streams = current_live
                 highest_priority = self.get_highest_priority_live(self.live_streams)
 
-                # If no stream is currently running, launch the highest priority one
+                # ALWAYS check for manual switch requests (user can switch anytime,
+                # including before any stream has started — see below).
+                control_target, control_mode = None, None
+                control_signal = self.check_control_signal()
+                if control_signal is not None:
+                    target, mode = control_signal
+                    if mode == "oneshot":
+                        pass  # UI handles one-shot streams entirely on its own
+                    elif target == "" and mode is None:
+                        # Legacy "switch" command - switch to highest priority now
+                        control_target, control_mode = highest_priority, None
+                    elif target and target in self.live_streams:
+                        control_target, control_mode = target, mode
+
+                # If no stream is currently running, launch the requested stream
+                # if one was specified (even if it isn't the highest priority),
+                # otherwise fall back to the highest priority one.
                 if not self.is_stream_alive():
-                    if highest_priority:
-                        self.launch_stream(highest_priority, self.live_streams[highest_priority])
+                    launch_target = control_target or highest_priority
+                    if launch_target:
+                        print(f"User requested switch to {launch_target} (mode={control_mode})" if control_target
+                              else f"[{datetime.now().strftime('%H:%M:%S')}] Launching highest priority stream")
+                        self.launch_stream(launch_target, self.live_streams[launch_target])
+                        self.manual_override = (control_mode == "override")
                     else:
                         print(f"[{datetime.now().strftime('%H:%M:%S')}] No live streams in priority list")
-                    self.manual_override = False
+                        self.manual_override = False
                     self.switching_soon = None
                     self.grace_period_start = None
 
                 # If a stream is running, check for manual switches and higher priority streams
                 elif self.is_stream_alive():
-                    # ALWAYS check for manual switch requests (user can switch anytime)
-                    control_signal = self.check_control_signal()
-                    if control_signal is not None:
-                        target, mode = control_signal
-                        if mode == "oneshot":
-                            pass  # UI handles one-shot streams entirely on its own
-                        elif target == "" and mode is None:
-                            # Legacy "switch" command - switch to highest priority now
-                            print("User requested immediate switch!")
-                            if highest_priority and highest_priority in self.live_streams:
-                                self.launch_stream(highest_priority, self.live_streams[highest_priority])
-                                self.manual_override = False
-                                self.switching_soon = None
-                                self.grace_period_start = None
-                        elif target and target in self.live_streams:
-                            print(f"User requested switch to {target} (mode={mode})")
-                            self.launch_stream(target, self.live_streams[target])
-                            self.manual_override = (mode == "override")
-                            self.switching_soon = None
-                            self.grace_period_start = None
+                    if control_target:
+                        print(f"User requested switch to {control_target} (mode={control_mode})")
+                        self.launch_stream(control_target, self.live_streams[control_target])
+                        self.manual_override = (control_mode == "override")
+                        self.switching_soon = None
+                        self.grace_period_start = None
 
                     # Check for auto-switch to higher priority stream (ONLY if it JUST came online)
                     if self.manual_override:

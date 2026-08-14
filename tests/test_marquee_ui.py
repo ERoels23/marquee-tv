@@ -52,6 +52,29 @@ async def test_frame_width_tracks_terminal_and_updates_on_resize(tmp_path, monke
 
 
 @pytest.mark.asyncio
+async def test_frame_height_fills_terminal_and_updates_on_resize(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("teststreamer\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+
+    app = MarqueeApp()
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        lines = app.query_one("#frame").content.split("\n")
+        assert len(lines) == 30  # border fills the whole terminal, not just content
+        assert lines[-2].plain.startswith("║ (Q)uit")  # footer pinned just above the bottom border
+        assert lines[-1].plain.startswith("╚")
+
+        await pilot.resize_terminal(120, 40)
+        await pilot.pause()
+        lines = app.query_one("#frame").content.split("\n")
+        assert len(lines) == 40
+
+
+@pytest.mark.asyncio
 async def test_frame_width_matches_widget_width_when_content_taller_than_terminal(tmp_path, monkeypatch):
     # Screen defaults to overflow-y: auto, which reserves a scrollbar gutter
     # once content is taller than the terminal (e.g. a long priority list on a
@@ -181,6 +204,53 @@ def test_refresh_data_does_not_clobber_fresh_api_data_with_stale_status_file(tmp
     assert "stale_streamer" not in app.live_streams
 
 
+def test_refresh_data_reloads_last_seen_on_cheap_tick(tmp_path, monkeypatch):
+    # Regression: the cheap (non-force) tick path only re-read .status.json,
+    # never .last_seen.json, so "last live" info could sit stale for up to
+    # a full 60s API_UPDATE_INTERVAL between full polls.
+    status_file = tmp_path / ".status.json"
+    last_seen_file = tmp_path / ".last_seen.json"
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", tmp_path / "streamers.txt")
+    (tmp_path / "streamers.txt").write_text("teststreamer\n")
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", status_file)
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", last_seen_file)
+    monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: False)
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+
+    app = MarqueeApp()
+    app.load_entries()
+    app.refresh_data(force=True)
+    assert app.last_seen == {}
+
+    last_seen_file.write_text(json.dumps({"teststreamer": "2026-08-14T00:00:00+00:00"}))
+    app.refresh_data(force=False)  # cheap tick — must still pick up the new file
+
+    assert app.last_seen.get("teststreamer") == "2026-08-14T00:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_enter_starts_daemon_when_not_running(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\nbeta\n")
+    control_file = tmp_path / ".control"
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr("marquee_ui.CONTROL_FILE", control_file)
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: False)
+    start_calls = {"count": 0}
+    monkeypatch.setattr(MarqueeApp, "start_service", lambda self: start_calls.__setitem__("count", start_calls["count"] + 1))
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.nav.index = 1  # highlight "beta"
+        await pilot.press("enter")
+        assert control_file.read_text() == "switch:beta"
+        assert start_calls["count"] == 1  # daemon wasn't running — Enter must start it
+
+
 @pytest.mark.asyncio
 async def test_enter_launches_highlighted_stream(tmp_path, monkeypatch):
     streamers_file = tmp_path / "streamers.txt"
@@ -191,6 +261,7 @@ async def test_enter_launches_highlighted_stream(tmp_path, monkeypatch):
     monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
     monkeypatch.setattr("marquee_ui.CONTROL_FILE", control_file)
     monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: True)  # avoid a real start_service() call
 
     app = MarqueeApp()
     async with app.run_test() as pilot:
@@ -258,6 +329,7 @@ async def test_adhoc_submit_shows_mode_picker_then_writes_control(tmp_path, monk
     monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
     monkeypatch.setattr("marquee_ui.CONTROL_FILE", control_file)
     monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: True)  # avoid a real start_service() call
 
     app = MarqueeApp()
     async with app.run_test() as pilot:
