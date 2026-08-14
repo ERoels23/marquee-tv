@@ -469,7 +469,6 @@ class MarqueeApp(App):
         ("e", "(E)dit"),
         ("slash", "(/)Ad-hoc"),
         ("i", "(I)nfo"),
-        (None, "↑↓/jk Nav"),
         ("enter", "⏎ Launch"),
     ]
 
@@ -576,7 +575,12 @@ class MarqueeApp(App):
                     (collapsed[:1], dot_style), (collapsed[1:], None),
                     (" │" + " " * MARGIN + "║", B),
                 ))
-        lines.append(Text("║" + " " * MARGIN + "└" + "─" * list_box_width + "┘" + " " * MARGIN + "║", style=B))
+        nav_label = " ↑↓/jk Nav "
+        lines.append(Text(
+            "║" + " " * MARGIN + "└" + nav_label
+            + "─" * (list_box_width - cell_len(nav_label)) + "┘" + " " * MARGIN + "║",
+            style=B,
+        ))
         lines.append(Text("║" + " " * inner_width + "║", style=B))
 
         # Pad with blank bordered lines so the outer box reaches the bottom of
