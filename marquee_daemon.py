@@ -27,7 +27,7 @@ CONTROL_FILE = SCRIPT_DIR / ".control"
 LAST_SEEN_FILE = SCRIPT_DIR / ".last_seen.json"
 CHECK_INTERVAL = 10  # Check for new streams and control signals every 10 seconds
 API_UPDATE_INTERVAL = 60  # Only query Twitch API every 60 seconds (rate limiting)
-GRACE_PERIOD = 600  # 10 minutes before auto-switching (in seconds)
+GRACE_PERIOD = 300  # 5 minutes before auto-switching (in seconds)
 
 
 def mpv_socket_path(streamer: str) -> Path:
@@ -328,7 +328,7 @@ class TwitchTVController:
 
     def show_notification(self, new_streamer: str, new_stream_info: Dict):
         """Show a desktop notification about upcoming stream switch"""
-        message = f"{new_streamer} went live! switching in 10 minutes"
+        message = f"{new_streamer} went live! switching in 5 minutes"
 
         # Use notify-send for desktop notification
         subprocess.run(
@@ -340,7 +340,7 @@ class TwitchTVController:
         print(f"STREAM AVAILABLE: {new_streamer}")
         print(f"Title: {new_stream_info['title']}")
         print(f"Game:  {new_stream_info['game']}")
-        print(f"Will auto-switch in 10 minutes")
+        print(f"Will auto-switch in 5 minutes")
         print(f"(Or close mpv to switch now)")
         print(f"{'!'*60}\n")
 

@@ -86,6 +86,51 @@ async def test_stopping_daemon_shows_daemon_offline_not_stale_stream_name(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_daemon_offline_clears_on_next_tick_after_starting_via_enter(tmp_path, monkeypatch):
+    # Regression: selecting a stream directly (Enter) starts the daemon when
+    # it wasn't running, but only action_start_service (s) forced a status
+    # refresh — so _daemon_was_running stayed stale and "Daemon Offline" kept
+    # showing until the next full poll (up to API_UPDATE_INTERVAL later),
+    # even though the daemon was actually up. refresh_data's cheap-tick path
+    # now re-checks daemon_running() whenever it currently thinks the daemon
+    # is offline, so this clears within a tick instead.
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\n")
+    control_file = tmp_path / ".control"
+    status_file = tmp_path / ".status.json"
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", status_file)
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr("marquee_ui.CONTROL_FILE", control_file)
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+
+    daemon_state = {"running": False}
+    monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: daemon_state["running"])
+
+    def fake_start_service(self):
+        daemon_state["running"] = True
+        status_file.write_text(json.dumps({
+            "current_stream": None, "stream_alive": False, "live_streams": {},
+        }))
+    monkeypatch.setattr(MarqueeApp, "start_service", fake_start_service)
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert "Daemon Offline" in app.query_one("#frame").content
+
+        app.nav.index = 0
+        await pilot.press("enter")
+        await pilot.pause()
+        assert daemon_state["running"] is True  # start_service ran
+
+        # Simulate the next ~1s tick rather than waiting on the real timer.
+        app.refresh_data()
+        app.render_frame()
+        assert "Daemon Offline" not in app.query_one("#frame").content
+
+
+@pytest.mark.asyncio
 async def test_frame_width_tracks_terminal_and_updates_on_resize(tmp_path, monkeypatch):
     from rich.cells import cell_len
 
@@ -924,13 +969,15 @@ async def test_footer_key_highlight_set_and_cleared(tmp_path, monkeypatch):
     monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: True)
 
     def footer_highlighted_text(app):
+        # No .strip() — the highlight must exactly match the hotkey label,
+        # not bleed into the surrounding separator/padding whitespace.
         footer = [l for l in app.query_one("#frame").content.split("\n") if "uit" in l.plain][0]
         from marquee_ui import HIGHLIGHT_STYLE
         spans = [s for s in footer.spans if str(s.style) == HIGHLIGHT_STYLE]
         if not spans:
             return None
         span = spans[0]
-        return footer.plain[span.start:span.end].strip()
+        return footer.plain[span.start:span.end]
 
     app = MarqueeApp()
     async with app.run_test() as pilot:
@@ -955,6 +1002,13 @@ async def test_footer_key_highlight_set_and_cleared(tmp_path, monkeypatch):
         await pilot.press("i")  # no current stream — action no-ops but key still registers
         assert app.last_footer_key == "i"
         assert footer_highlighted_text(app) == "(I)nfo"
+
+        # Regression: "enter" is the last segment on the line — its highlight
+        # previously swallowed all the trailing fill padding too, lighting up
+        # the rest of the line instead of just the "Launch" label.
+        await pilot.press("enter")
+        assert app.last_footer_key == "enter"
+        assert footer_highlighted_text(app) == "⏎ Launch"
 
         await pilot.press("up")
         assert app.last_footer_key is None

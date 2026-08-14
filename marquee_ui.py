@@ -291,6 +291,13 @@ class MarqueeApp(App):
     def refresh_data(self, force: bool = False) -> None:
         now = time.time()
         if not force and now - self.last_api_poll < API_UPDATE_INTERVAL:
+            if not self._daemon_was_running:
+                # Cheap re-check: only pay for a pgrep call while we think the
+                # daemon is offline, so a daemon started outside of (s) (e.g.
+                # by selecting a stream directly) is detected within a tick
+                # instead of sitting stale until the next full poll (up to
+                # API_UPDATE_INTERVAL later).
+                self._daemon_was_running = self.daemon_running() and STATUS_FILE.exists()
             if self._daemon_was_running:
                 self._load_status_file()
             self._load_last_seen_file()  # cheap local file read — no reason to rate-limit it
@@ -408,13 +415,13 @@ class MarqueeApp(App):
         return line
 
     FOOTER_SEGMENTS = [
-        (None, "(Q)uit "),
-        ("s", "(S)tart "),
-        ("x", "(X)Stop "),
-        ("e", "(E)dit "),
-        ("slash", "(/)Ad-hoc "),
-        ("i", "(I)nfo "),
-        (None, "↑↓/jk Nav "),
+        (None, "(Q)uit"),
+        ("s", "(S)tart"),
+        ("x", "(X)Stop"),
+        ("e", "(E)dit"),
+        ("slash", "(/)Ad-hoc"),
+        ("i", "(I)nfo"),
+        (None, "↑↓/jk Nav"),
         ("enter", "⏎ Launch"),
     ]
 
@@ -422,17 +429,21 @@ class MarqueeApp(App):
         """Keybind glossary as (text, style) parts, with whichever key was
         last pressed (from FOOTER_SEGMENTS) highlighted like a selected row —
         immediate confirmation that the press registered, even before its
-        effect (e.g. mpv/chatterino relaunching) is visible."""
-        plain = "".join(text for _, text in self.FOOTER_SEGMENTS)
-        if cell_len(plain) > width:
-            return [(set_cell_size(plain, width), None)]  # narrow-terminal fallback
-        pad = width - cell_len(plain)
+        effect (e.g. mpv/chatterino relaunching) is visible. Only the literal
+        hotkey label itself is styled — separators and trailing fill stay
+        unstyled, so the highlight never bleeds into surrounding whitespace."""
+        joined_plain = " ".join(text for _, text in self.FOOTER_SEGMENTS)
+        if cell_len(joined_plain) > width:
+            return [(set_cell_size(joined_plain, width), None)]  # narrow-terminal fallback
+        pad = width - cell_len(joined_plain)
         parts = []
         for i, (key, text) in enumerate(self.FOOTER_SEGMENTS):
-            if i == len(self.FOOTER_SEGMENTS) - 1:
-                text = text + " " * pad
             style = HIGHLIGHT_STYLE if key is not None and key == self.last_footer_key else None
             parts.append((text, style))
+            if i < len(self.FOOTER_SEGMENTS) - 1:
+                parts.append((" ", None))
+        if pad:
+            parts.append((" " * pad, None))
         return parts
 
     def render_frame(self) -> None:

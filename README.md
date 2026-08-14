@@ -16,7 +16,7 @@ instead of curses, and several new features were added (see below).
   stream.
 - **Intelligent auto-switching**: when a higher-priority stream goes live
   while you're watching something lower-priority, a desktop notification
-  fires and the daemon waits a 10-minute grace period before auto-switching,
+  fires and the daemon waits a 5-minute grace period before auto-switching,
   so you can finish what you're watching.
 - **Automatic fallback**: when the current stream ends, the daemon
   immediately launches the next highest-priority live stream.
@@ -211,7 +211,7 @@ When a higher-priority stream goes online while you're watching something
 else:
 1. A desktop notification appears.
 2. The TUI's live-status row shows it as live immediately.
-3. The daemon auto-switches after a 10-minute grace period, unless you're in
+3. The daemon auto-switches after a 5-minute grace period, unless you're in
    Override mode (see Ad-hoc above) or you switch manually first.
 4. If you close mpv, the daemon immediately switches to the next
    highest-priority live stream.
@@ -221,8 +221,8 @@ highest-priority live stream.
 
 ## How it works
 
-1. **Initial check**: the daemon checks which followed streamers are
-   currently live.
+1. **Initial check**: the daemon checks which streamers in the priority list
+   are currently live (regardless of follow status).
 2. **Launch**: launches the highest-priority currently-live streamer via
    `streamlink` + `mpv`, and (re)launches Chatterino pointed at that channel.
 3. **Monitoring**: every 10 seconds the daemon checks for control signals
@@ -230,7 +230,7 @@ highest-priority live stream.
    it re-polls the Twitch API for live status (rate-limited separately from
    the 10s loop).
 4. **Grace period**: if a higher-priority stream goes online while you're
-   watching something lower-priority, the daemon waits 10 minutes before
+   watching something lower-priority, the daemon waits 5 minutes before
    auto-switching (unless overridden or switched manually).
 5. **Live title updates**: on each 60-second API poll, if the current
    stream's game or title changed, the daemon pushes an updated title to
@@ -254,8 +254,7 @@ These live as constants near the top of `marquee_daemon.py`:
 ```python
 CHECK_INTERVAL = 10       # seconds between control-signal/reload checks
 API_UPDATE_INTERVAL = 60  # seconds between Twitch API polls
-GRACE_PERIOD = 600        # seconds (10 minutes) before auto-switching
-TWITCH_USER_ID = "..."    # your Twitch user ID, for the followed-streams query
+GRACE_PERIOD = 300        # seconds (5 minutes) before auto-switching
 ```
 
 Streamlink/mpv player settings (quality, volume, low-latency flags) are set
