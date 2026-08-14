@@ -292,7 +292,9 @@ class TwitchTVController:
         socket_path = mpv_socket_path(streamer)
         socket_path.unlink(missing_ok=True)
         player_args = (
-            "--profile=twitch --volume=60 --force-seekable=yes "
+            "--cache-pause=no --demuxer-readahead-secs=30 --demuxer-max-bytes=200M "
+            "--video-sync=audio --audio-buffer=2 "
+            "--volume=60 --force-seekable=yes "
             "--demuxer-lavf-o=fflags=+genpts+discardcorrupt "
             f"--input-ipc-server={socket_path}"
         )
