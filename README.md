@@ -340,9 +340,10 @@ shebang / `marquee.sh` are resolving to that venv's interpreter.
   alias marquee='/path/to/marquee.sh'
   ```
 
-- **Auto-start on login** (systemd user service): a ready-to-use unit is
-  already checked in as `marquee.service`. Symlink or copy it into
-  `~/.config/systemd/user/`, then enable it:
+- **Auto-start on login** (systemd user service): a template unit is
+  checked in as `marquee.service` — edit the two `/path/to/marquee-tv`
+  placeholders in it to match wherever you cloned this repo, then copy it
+  into `~/.config/systemd/user/` and enable it:
   ```bash
   mkdir -p ~/.config/systemd/user
   cp marquee.service ~/.config/systemd/user/

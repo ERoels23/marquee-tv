@@ -10,16 +10,24 @@
 #   now               Switch to highest-priority stream NOW (don't wait for grace period)
 #   watch             Run in foreground (for debugging)
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 MAIN_SCRIPT="$SCRIPT_DIR/marquee_daemon.py"
 UI_SCRIPT="$SCRIPT_DIR/marquee_ui.py"
 STATUS_FILE="$SCRIPT_DIR/.status.json"
 CONTROL_FILE="$SCRIPT_DIR/.control"
 TMUX_SESSION="marquee"
 
+# Prefer the project's own venv (where textual etc. are actually installed)
+# over whatever "python3" resolves to on PATH.
+if [ -x "$SCRIPT_DIR/.venv/bin/python3" ]; then
+    PYTHON="$SCRIPT_DIR/.venv/bin/python3"
+else
+    PYTHON="python3"
+fi
+
 case "${1:-ui}" in
     ui)
-        "$UI_SCRIPT"
+        exec "$PYTHON" "$UI_SCRIPT"
         ;;
 
     start)
@@ -29,7 +37,7 @@ case "${1:-ui}" in
         fi
 
         echo "Starting TwitchTV in background..."
-        nohup "$MAIN_SCRIPT" > "$SCRIPT_DIR/.log" 2>&1 &
+        nohup "$PYTHON" "$MAIN_SCRIPT" > "$SCRIPT_DIR/.log" 2>&1 &
         sleep 1
 
         if pgrep -f "python3.*marquee_daemon.py" > /dev/null 2>&1; then
@@ -67,7 +75,7 @@ case "${1:-ui}" in
 
     watch)
         echo "Running TwitchTV in foreground (Ctrl+C to stop)..."
-        "$MAIN_SCRIPT"
+        exec "$PYTHON" "$MAIN_SCRIPT"
         ;;
 
     log)

@@ -1,4 +1,4 @@
-# TwitchTV Priority List
+# Marquee.tv Priority List
 # One streamer per line, in order of preference
 # Lines starting with # are ignored (comments)
 # The script will launch the highest-priority currently-live streamer
@@ -6,6 +6,9 @@
 #
 # Nicknames: append  |Nickname  after a username to give it a display name
 # Example:   northernlion|NL
+#
+# A line containing exactly --- renders as a separator in the priority
+# list and is skipped by navigation — useful for grouping streamers.
 
 # Add your streamers below in priority order:
 jerma985|Jerma
@@ -14,10 +17,7 @@ northernlion|Northernlion
 shaun_vids|Shaun
 chiblee|Chiblee
 paleostream|Paleostream
+---
 alveussanctuary|Alveus
-theworldbirdsanctuary|WBS
+theworldbirdsanctuary|Bird Sanc
 crittervision|Critters
-dumbdog|Apollo
-dunkstream|Dunkey
-hcjustin|Justin
-bobross|Bob

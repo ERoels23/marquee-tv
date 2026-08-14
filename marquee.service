@@ -1,12 +1,13 @@
 [Unit]
 Description=Marquee.tv Automatic Stream Watcher
-Documentation=file:///mnt/Wrestler_Ted/claudes_room/TwitchTV/README.md
+Documentation=file:///path/to/marquee-tv/README.md
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/mnt/Wrestler_Ted/claudes_room/TwitchTV/marquee_daemon.py
+# Replace /path/to/marquee-tv below with wherever you cloned this repo.
+ExecStart=/path/to/marquee-tv/.venv/bin/python3 /path/to/marquee-tv/marquee_daemon.py
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
