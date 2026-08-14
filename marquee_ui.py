@@ -610,7 +610,9 @@ class MarqueeApp(App):
                 self.stop_service()  # also kills chatterino
                 self.exit()
             elif choice == "keep":
-                sp.run(["pkill", "-x", "chatterino"], capture_output=True)
+                # Daemon (and its stream + chatterino) keep running — leave
+                # chatterino open too, it's still the companion chat window
+                # for whatever's still playing.
                 self.exit()
             # None (escaped) — stay open, don't quit
 

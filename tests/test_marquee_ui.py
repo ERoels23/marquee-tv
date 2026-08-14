@@ -839,9 +839,9 @@ async def test_quit_menu_keep_option_leaves_daemon_running(tmp_path, monkeypatch
         await pilot.pause()
         assert stop_calls["count"] == 0  # daemon left running
         assert exited["called"] is True
-        # daemon kept running, but quitting must still kill chatterino
-        assert any(call[0][:2] == ["pkill", "-x"] and "chatterino" in call[0] for call in run_calls)
-        assert any(call[0][:2] == ["pkill", "-x"] and "chatterino" in call[0] for call in run_calls)
+        # Daemon (and its stream) stay up, so chatterino — its companion chat
+        # window — must be left running too, not killed.
+        assert not any(call[0][:2] == ["pkill", "-x"] and "chatterino" in call[0] for call in run_calls)
 
 
 @pytest.mark.asyncio

@@ -393,7 +393,10 @@ class TwitchTVController:
         """Main event loop"""
         print("Starting TwitchTV...")
         print(f"Priority list: {', '.join(self.priority_list)}")
-        self.backfill_last_seen()
+        # Runs in the background rather than blocking here: it can take tens
+        # of seconds (up to 2 extra API calls per missing streamer), and
+        # nothing about actually watching a stream depends on it.
+        threading.Thread(target=self.backfill_last_seen, daemon=True).start()
 
         while self.running:
             try:
