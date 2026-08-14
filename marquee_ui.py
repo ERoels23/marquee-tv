@@ -284,7 +284,7 @@ class MarqueeApp(App):
         try:
             for i in range(0, len(usernames), 100):  # Helix caps user_login at 100/request
                 batch = usernames[i:i + 100]
-                cmd = ["/usr/bin/twitch", "api", "get", "streams"]
+                cmd = ["twitch", "api", "get", "streams"]
                 for name in batch:
                     cmd += ["-q", f"user_login={name}"]
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
@@ -311,7 +311,7 @@ class MarqueeApp(App):
         """Query Twitch for one streamer's live info, regardless of follow status."""
         try:
             result = subprocess.run(
-                ["/usr/bin/twitch", "api", "get", "streams", "-q", f"user_login={streamer}"],
+                ["twitch", "api", "get", "streams", "-q", f"user_login={streamer}"],
                 capture_output=True, text=True, timeout=10,
             )
             # Judge success by whether stdout parses, not the exit code: the
@@ -732,7 +732,7 @@ class MarqueeApp(App):
         import subprocess as sp
         try:
             result = sp.run(
-                ["/usr/bin/twitch", "api", "get", "users", "-q", f"login={streamer}"],
+                ["twitch", "api", "get", "users", "-q", f"login={streamer}"],
                 capture_output=True, text=True, timeout=10,
             )
             # Judge success by whether stdout parses, not the exit code: the

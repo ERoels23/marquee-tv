@@ -116,7 +116,7 @@ class TwitchTVController:
             # Helix caps user_login at 100 per request; batch defensively.
             for i in range(0, len(self.priority_list), 100):
                 batch = self.priority_list[i:i + 100]
-                cmd = ["/usr/bin/twitch", "api", "get", "streams"]
+                cmd = ["twitch", "api", "get", "streams"]
                 for streamer in batch:
                     cmd += ["-q", f"user_login={streamer}"]
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
@@ -182,7 +182,7 @@ class TwitchTVController:
         try:
             for i in range(0, len(missing), 100):
                 batch = missing[i:i + 100]
-                cmd = ["/usr/bin/twitch", "api", "get", "users"]
+                cmd = ["twitch", "api", "get", "users"]
                 for streamer in batch:
                     cmd += ["-q", f"login={streamer}"]
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
@@ -214,7 +214,7 @@ class TwitchTVController:
             if not at:
                 try:
                     result = subprocess.run(
-                        ["/usr/bin/twitch", "api", "get", "videos",
+                        ["twitch", "api", "get", "videos",
                          "-q", f"user_id={user_id}", "-q", "type=archive", "-q", "first=1"],
                         capture_output=True, text=True, timeout=10,
                     )
@@ -228,7 +228,7 @@ class TwitchTVController:
             if not game or not title:
                 try:
                     result = subprocess.run(
-                        ["/usr/bin/twitch", "api", "get", "channels", "-q", f"broadcaster_id={user_id}"],
+                        ["twitch", "api", "get", "channels", "-q", f"broadcaster_id={user_id}"],
                         capture_output=True, text=True, timeout=10,
                     )
                     channels = json.loads(result.stdout).get('data', [])
