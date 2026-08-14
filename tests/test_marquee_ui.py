@@ -729,6 +729,96 @@ async def test_e_survives_missing_editor_binary(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_i_shows_highlighted_entry_not_currently_watched_stream(tmp_path, monkeypatch):
+    # Info now reflects whichever entry is highlighted in the list, which
+    # can differ from the stream actually being watched.
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\nbeta\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "_fetch_channel_bio", lambda self, streamer: "bio")
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.current_stream = "alpha"  # actually watching alpha
+        app.live_streams = {
+            "alpha": {"title": "Alpha title", "game": "g", "viewers": 1, "started_at": None},
+            "beta": {"title": "Beta title", "game": "g", "viewers": 2, "started_at": None},
+        }
+        app.nav.index = 1  # but "beta" is highlighted in the list
+        await pilot.press("i")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app.screen, InfoModal)
+        title_widget = app.screen.query_one("#info-title", Static)
+        assert "Beta title" in title_widget.content
+        assert "Alpha title" not in title_widget.content
+
+
+@pytest.mark.asyncio
+async def test_i_shows_last_seen_category_and_title_for_offline_highlighted_entry(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\n")
+    last_seen_file = tmp_path / ".last_seen.json"
+    last_seen_file.write_text(json.dumps({
+        "alpha": {"at": "2026-01-01T00:00:00+00:00", "game": "Old Category", "title": "Old Title"},
+    }))
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", last_seen_file)
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "_fetch_channel_bio", lambda self, streamer: "bio")
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("i")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app.screen, InfoModal)
+        content = "\n".join(w.content.plain if hasattr(w.content, "plain") else str(w.content)
+                             for w in app.screen.query(Static))
+        assert "Old Category" in content
+        assert "Old Title" in content
+
+
+@pytest.mark.asyncio
+async def test_open_in_browser_hotkey(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha|Alpha\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "_fetch_channel_bio", lambda self, streamer: "bio")
+
+    opened = []
+    monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url))
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("i")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        modal = app.screen
+        assert isinstance(modal, InfoModal)
+
+        await pilot.press("o")
+        assert opened == ["https://twitch.tv/alpha"]
+        assert modal.footer_key == "o"
+
+        # The modal is still open — (O) doesn't close it.
+        assert isinstance(app.screen, InfoModal)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, InfoModal)
+
+
+@pytest.mark.asyncio
 async def test_i_shows_overlay_with_title_and_bio(tmp_path, monkeypatch):
     streamers_file = tmp_path / "streamers.txt"
     streamers_file.write_text("alpha\n")
@@ -763,9 +853,30 @@ async def test_i_shows_overlay_with_title_and_bio(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_i_does_nothing_when_no_current_stream(tmp_path, monkeypatch):
+async def test_i_shows_info_for_highlighted_entry_regardless_of_current_stream(tmp_path, monkeypatch):
+    # Info now reflects whichever entry is highlighted in the list, not
+    # necessarily the currently-watched stream — so it should open even
+    # when current_stream is None, as long as there's a highlighted entry.
     streamers_file = tmp_path / "streamers.txt"
     streamers_file.write_text("alpha\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "_fetch_channel_bio", lambda self, streamer: "bio")
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.current_stream is None
+        await pilot.press("i")
+        assert isinstance(app.screen, InfoModal)
+
+
+@pytest.mark.asyncio
+async def test_i_does_nothing_with_empty_entry_list(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("")
     monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
     monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
     monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
@@ -774,7 +885,7 @@ async def test_i_does_nothing_when_no_current_stream(tmp_path, monkeypatch):
     app = MarqueeApp()
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert app.current_stream is None
+        assert app.entries == []
         await pilot.press("i")
         assert not isinstance(app.screen, InfoModal)
 
@@ -999,9 +1110,11 @@ async def test_footer_key_highlight_set_and_cleared(tmp_path, monkeypatch):
         assert app.last_footer_key is None
         assert footer_highlighted_text(app) is None
 
-        await pilot.press("i")  # no current stream — action no-ops but key still registers
+        await pilot.press("i")  # opens the info modal for the highlighted entry
         assert app.last_footer_key == "i"
         assert footer_highlighted_text(app) == "(I)nfo"
+        await pilot.press("escape")  # close it — back to the main screen
+        await pilot.pause()
 
         # Regression: "enter" is the last segment on the line — its highlight
         # previously swallowed all the trailing fill padding too, lighting up
@@ -1035,6 +1148,68 @@ async def test_stop_service_kills_mpv_and_chatterino(tmp_path, monkeypatch):
         commands = [call[0] for call in run_calls]
         assert any("mpv" in c for c in commands)
         assert any(c[:2] == ["pkill", "-x"] and "chatterino" in c for c in commands)
+
+
+@pytest.mark.asyncio
+async def test_start_service_highlight_renders_before_blocking_call(tmp_path, monkeypatch):
+    # Regression: the footer highlight only became visible once the blocking
+    # start_service() subprocess call finished, since the whole handler ran
+    # synchronously — the screen can't repaint mid-callback. render_frame()
+    # must run (and therefore be observed) before start_service is invoked.
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: False)
+
+    call_order = []
+    monkeypatch.setattr(MarqueeApp, "start_service", lambda self: call_order.append("start_service"))
+    orig_render = MarqueeApp.render_frame
+
+    def tracking_render(self):
+        if "start_service" not in call_order and self.last_footer_key == "s":
+            call_order.append("render_with_highlight")
+        orig_render(self)
+
+    monkeypatch.setattr(MarqueeApp, "render_frame", tracking_render)
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("s")
+        await pilot.pause()
+        assert call_order[:2] == ["render_with_highlight", "start_service"]
+
+
+@pytest.mark.asyncio
+async def test_stop_service_highlight_renders_before_blocking_call(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: True)
+
+    call_order = []
+    monkeypatch.setattr(MarqueeApp, "stop_service", lambda self: call_order.append("stop_service"))
+    orig_render = MarqueeApp.render_frame
+
+    def tracking_render(self):
+        if "stop_service" not in call_order and self.last_footer_key == "x":
+            call_order.append("render_with_highlight")
+        orig_render(self)
+
+    monkeypatch.setattr(MarqueeApp, "render_frame", tracking_render)
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("x")
+        await pilot.pause()
+        assert call_order[:2] == ["render_with_highlight", "stop_service"]
 
 
 @pytest.mark.asyncio

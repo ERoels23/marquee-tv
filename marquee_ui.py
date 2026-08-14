@@ -22,7 +22,7 @@ from marquee_render import (
     header_border_label, STATUS_DOT,
 )
 from mpv_ipc import set_title
-from ui_format import build_mpv_title
+from ui_format import build_mpv_title, format_uptime, format_viewers, format_last_seen
 
 SCRIPT_DIR = Path(__file__).parent
 STREAMERS_FILE = SCRIPT_DIR / "streamers.txt"
@@ -107,7 +107,9 @@ class QuitConfirmModal(ModalScreen[Optional[str]]):
 
 
 class InfoModal(ModalScreen):
-    """Centered popup showing the full title and channel bio for a stream."""
+    """Centered popup showing as much info as possible for whichever
+    streamer is highlighted in the priority list — live stats if they're
+    live, otherwise their last-known info — plus their channel bio."""
 
     DEFAULT_CSS = f"""
     InfoModal {{
@@ -123,30 +125,62 @@ class InfoModal(ModalScreen):
     }}
     """
 
-    def __init__(self, streamer: str, title: str) -> None:
+    def __init__(self, row: RowData) -> None:
         super().__init__()
-        self.streamer = streamer
-        self.title_text = title
+        self.row = row
+        self.footer_key: Optional[str] = None
 
     def compose(self) -> ComposeResult:
+        row = self.row
+        name = row.name if row.username == row.name else f"{row.name} ({row.username})"
+        status_line = Text("Status: ")
+        status_line.append(STATUS_DOT, style=LIVE_DOT_STYLE if row.is_live else OFFLINE_DOT_STYLE)
+        status_line.append(" Live" if row.is_live else " Offline")
         with Vertical():
-            yield Static(f"Marquee.tv — Info: {self.streamer}")
+            yield Static(f"Marquee.tv — Info: {name}")
             yield Static("")
-            yield Static(f"Title: {self.title_text}", id="info-title")
+            yield Static(status_line)
+            if row.is_live:
+                yield Static(f"Category: {row.game or 'unknown'}")
+                uptime = format_uptime(row.started_at) if row.started_at else "unknown"
+                yield Static(f"Uptime: {uptime}")
+                viewers = format_viewers(row.viewers) if row.viewers is not None else "unknown"
+                yield Static(f"Viewers: {viewers}")
+                yield Static(f"Title: {row.title or '(no title)'}", id="info-title")
+            else:
+                last_seen = row.last_seen or {}
+                yield Static(f"Last live: {format_last_seen(last_seen.get('at'))}")
+                yield Static(f"Category: {last_seen.get('game') or 'unknown'}")
+                yield Static(f"Title: {last_seen.get('title') or 'unknown'}", id="info-title")
             yield Static("")
             yield Static("Channel bio:")
             yield Static("(loading...)", id="bio")
             yield Static("")
-            yield Static("Press i or Esc to close")
+            yield Static("", id="info-footer")
+
+    def on_mount(self) -> None:
+        self._render_footer()
+
+    def _render_footer(self) -> None:
+        style = HIGHLIGHT_STYLE if self.footer_key == "o" else None
+        line = Text()
+        line.append("(O)pen in Browser", style=style)
+        line.append("   (I)/(Esc) Close")
+        self.query_one("#info-footer", Static).update(line)
 
     def update_bio(self, bio: str) -> None:
         self.query_one("#bio", Static).update(bio)
 
     def on_key(self, event: events.Key) -> None:
+        event.stop()
+        event.prevent_default()
         if event.key in ("i", "escape"):
-            event.stop()
-            event.prevent_default()
             self.dismiss()
+        elif event.key == "o":
+            self.footer_key = "o"
+            self._render_footer()
+            import webbrowser
+            webbrowser.open(f"https://twitch.tv/{self.row.username}")
         else:
             event.stop()
             event.prevent_default()
@@ -595,20 +629,20 @@ class MarqueeApp(App):
 
     async def action_toggle_info(self) -> None:
         self.last_footer_key = "i"
-        if not self.current_stream:
-            self.render_frame()
+        self.render_frame()  # bake the highlight into #frame even though the modal covers it
+        if not (0 <= self.nav.index < len(self.entries)):
             return
-        info = self.live_streams.get(self.current_stream, {})
-        modal = InfoModal(self.current_stream, info.get('title', '(unknown)'))
+        row = self._row_data()[self.nav.index]
+        modal = InfoModal(row)
         # Await the mount so the modal's #bio widget exists before the bio-fetch
         # worker (which can complete almost instantly) tries to update it.
         await self.push_screen(modal)
-        self.run_worker(self._load_channel_bio(self.current_stream, modal), exclusive=True)
+        self.run_worker(self._load_channel_bio(row.username, modal), exclusive=True)
 
     async def _load_channel_bio(self, streamer: str, modal: "InfoModal") -> None:
         import asyncio
         bio = await asyncio.to_thread(self._fetch_channel_bio, streamer)
-        if modal.is_attached and self.current_stream == streamer:
+        if modal.is_attached:
             modal.update_bio(bio)
 
     def _fetch_channel_bio(self, streamer: str) -> str:
@@ -639,21 +673,27 @@ class MarqueeApp(App):
         sp.run(["pkill", "-f", "mpv"], capture_output=True)
         sp.run(["pkill", "-x", "chatterino"], capture_output=True)
 
-    def action_start_service(self) -> None:
+    async def action_start_service(self) -> None:
         self.last_footer_key = "s"
-        if not self.daemon_running():
-            self.start_service()
+        already_running = self.daemon_running()
+        self.render_frame()  # paint the highlight before the blocking start_service call
+        if not already_running:
+            import asyncio
+            await asyncio.to_thread(self.start_service)
             self.refresh_data(force=True)
-        self.render_frame()
+            self.render_frame()
 
-    def action_stop_service(self) -> None:
+    async def action_stop_service(self) -> None:
         self.last_footer_key = "x"
-        if self.daemon_running():
-            self.stop_service()
+        running = self.daemon_running()
+        self.render_frame()  # paint the highlight before the blocking stop_service call
+        if running:
+            import asyncio
+            await asyncio.to_thread(self.stop_service)
             self.current_stream = None
             self.stream_alive = False
             self.refresh_data(force=True)
-        self.render_frame()
+            self.render_frame()
 
     def action_request_quit(self) -> None:
         import subprocess as sp
