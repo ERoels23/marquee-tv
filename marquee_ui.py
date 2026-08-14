@@ -10,10 +10,12 @@ from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.containers import Vertical
+from textual.screen import ModalScreen
 from textual.widgets import Static
 
 from priority_list import parse_streamers_file, StreamerEntry
-from marquee_model import ListNavigator, AdHocFlow, AdHocFlowState, AdHocMode, QuitConfirm
+from marquee_model import ListNavigator, AdHocFlow, AdHocFlowState, AdHocMode
 from marquee_render import HeaderData, RowData, render_header, render_row_collapsed, render_row_expanded_detail, header_border_label
 from mpv_ipc import set_title
 from ui_format import build_mpv_title
@@ -33,6 +35,71 @@ MARGIN = 2
 # Catppuccin Mocha accents (matches the user's terminal/desktop theme).
 BORDER_COLOR = "#74c7ec"  # Sapphire — outer box, NOW WATCHING/PRIORITY LIST boxes, labels, footer
 HIGHLIGHT_STYLE = "bold #1e1e2e on #b4befe"  # dark text on Lavender bar
+
+_MODAL_PANEL_CSS = f"""
+    align: center middle;
+
+    & > Vertical {{
+        width: auto;
+        height: auto;
+        max-width: 80%;
+        border: round {BORDER_COLOR};
+        padding: 1 2;
+    }}
+"""
+
+
+class QuitConfirmModal(ModalScreen[bool]):
+    """Centered popup asking whether to quit and stop the daemon."""
+
+    DEFAULT_CSS = f"QuitConfirmModal {{{_MODAL_PANEL_CSS}}}"
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static("Quit and stop daemon?")
+            yield Static("[Enter] Quit   [Esc] Cancel")
+
+    def on_key(self, event: events.Key) -> None:
+        event.stop()
+        event.prevent_default()
+        if event.key == "enter":
+            self.dismiss(True)
+        elif event.key == "escape":
+            self.dismiss(False)
+
+
+class InfoModal(ModalScreen):
+    """Centered popup showing the full title and channel bio for a stream."""
+
+    DEFAULT_CSS = f"InfoModal {{{_MODAL_PANEL_CSS}}}"
+
+    def __init__(self, streamer: str, title: str) -> None:
+        super().__init__()
+        self.streamer = streamer
+        self.title_text = title
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static(f"Marquee.tv — Info: {self.streamer}")
+            yield Static("")
+            yield Static(f"Title: {self.title_text}", id="info-title")
+            yield Static("")
+            yield Static("Channel bio:")
+            yield Static("(loading...)", id="bio")
+            yield Static("")
+            yield Static("Press i or Esc to close")
+
+    def update_bio(self, bio: str) -> None:
+        self.query_one("#bio", Static).update(bio)
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key in ("i", "escape"):
+            event.stop()
+            event.prevent_default()
+            self.dismiss()
+        else:
+            event.stop()
+            event.prevent_default()
 
 
 class MarqueeApp(App):
@@ -66,9 +133,6 @@ class MarqueeApp(App):
         self.nav = ListNavigator(0)
         self.ad_hoc = AdHocFlow()
         self.one_shots: Dict[str, dict] = {}
-        self.info_visible = False
-        self.channel_bio: Optional[str] = None
-        self.quit_confirm = QuitConfirm()
         self._terminal_width = MIN_OUTER_WIDTH
 
     def compose(self) -> ComposeResult:
@@ -224,21 +288,6 @@ class MarqueeApp(App):
     def render_frame(self) -> None:
         from rich.cells import cell_len, set_cell_size
 
-        if self.info_visible and self.current_stream:
-            info = self.live_streams.get(self.current_stream, {})
-            overlay = [
-                f"Marquee.tv — Info: {self.current_stream}",
-                "",
-                f"Title: {info.get('title', '(unknown)')}",
-                "",
-                "Channel bio:",
-                self.channel_bio or "(loading...)",
-                "",
-                "Press i to close",
-            ]
-            self.query_one("#frame", Static).update(Text("\n".join(overlay)))
-            return
-
         # Widths below are hand-tuned (not the plan's original formulas, which had
         # off-by-one/two errors) to keep every rendered line at exactly outer_width
         # cells — verify with rich.cells.cell_len if you touch these.
@@ -301,8 +350,6 @@ class MarqueeApp(App):
         lines.append(Text("║" + " " * inner_width + "║", style=B))
 
         footer = "(Q)uit (S)tart (X)Stop (E)dit (/)Ad-hoc (I)nfo ↑↓/jk Nav ⏎ Launch"
-        if self.quit_confirm.armed:
-            footer = "Press q again to quit"
         lines.append(Text("║ " + set_cell_size(footer, inner_width - 2) + " ║", style=B))
         lines.append(Text("╚" + "═" * inner_width + "╝", style=B))
 
@@ -344,24 +391,21 @@ class MarqueeApp(App):
         self.load_entries()
         self.render_frame()
 
-    def action_toggle_info(self) -> None:
-        if self.info_visible:
-            self.info_visible = False
-            self.render_frame()
-            return
+    async def action_toggle_info(self) -> None:
         if not self.current_stream:
             return
-        self.channel_bio = None  # loading state
-        self.info_visible = True
-        self.render_frame()
-        self.run_worker(self._load_channel_bio(self.current_stream), exclusive=True)
+        info = self.live_streams.get(self.current_stream, {})
+        modal = InfoModal(self.current_stream, info.get('title', '(unknown)'))
+        # Await the mount so the modal's #bio widget exists before the bio-fetch
+        # worker (which can complete almost instantly) tries to update it.
+        await self.push_screen(modal)
+        self.run_worker(self._load_channel_bio(self.current_stream, modal), exclusive=True)
 
-    async def _load_channel_bio(self, streamer: str) -> None:
+    async def _load_channel_bio(self, streamer: str, modal: "InfoModal") -> None:
         import asyncio
         bio = await asyncio.to_thread(self._fetch_channel_bio, streamer)
-        if self.info_visible and self.current_stream == streamer:
-            self.channel_bio = bio
-            self.render_frame()
+        if modal.is_attached and self.current_stream == streamer:
+            modal.update_bio(bio)
 
     def _fetch_channel_bio(self, streamer: str) -> str:
         import subprocess as sp
@@ -402,20 +446,15 @@ class MarqueeApp(App):
             self.render_frame()
 
     def action_request_quit(self) -> None:
-        if self.quit_confirm.confirm():
-            if self.daemon_running():
-                self.stop_service()
-            self.exit()
-        else:
-            self.quit_confirm.request()
-            self.render_frame()
+        def handle_result(confirmed: bool) -> None:
+            if confirmed:
+                if self.daemon_running():
+                    self.stop_service()
+                self.exit()
+
+        self.push_screen(QuitConfirmModal(), handle_result)
 
     async def on_key(self, event) -> None:
-        if self.info_visible:
-            if event.key != "i":
-                event.stop()
-                event.prevent_default()
-            return
         if self.ad_hoc.state == AdHocFlowState.TYPING:
             event.stop()
             event.prevent_default()

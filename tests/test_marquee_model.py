@@ -1,4 +1,4 @@
-from marquee_model import ListNavigator, AdHocFlow, AdHocFlowState, AdHocMode, QuitConfirm
+from marquee_model import ListNavigator, AdHocFlow, AdHocFlowState, AdHocMode
 
 
 def test_navigator_wraps_down():
@@ -68,21 +68,6 @@ def test_adhoc_flow_cancel_resets():
     flow.cancel()
     assert flow.buffer == ""
     assert flow.state == AdHocFlowState.IDLE
-
-
-def test_quit_confirm_requires_arm_then_confirm():
-    qc = QuitConfirm()
-    assert qc.confirm() is False  # not armed yet
-    qc.request()
-    assert qc.confirm() is True
-    assert qc.confirm() is False  # disarmed after confirming
-
-
-def test_quit_confirm_cancel():
-    qc = QuitConfirm()
-    qc.request()
-    qc.cancel()
-    assert qc.confirm() is False
 
 
 def test_navigator_single_item_wraps():

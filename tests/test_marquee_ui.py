@@ -4,7 +4,9 @@ from unittest import mock
 
 import pytest
 
-from marquee_ui import MarqueeApp
+from textual.widgets import Static
+
+from marquee_ui import MarqueeApp, InfoModal, QuitConfirmModal
 from marquee_model import AdHocFlowState
 
 
@@ -357,17 +359,13 @@ async def test_i_shows_overlay_with_title_and_bio(tmp_path, monkeypatch):
         await pilot.press("i")
         await app.workers.wait_for_complete()
         await pilot.pause()
-        frame = app.query_one("#frame")
-        assert "Playing games" in frame.content
-        assert "A cool streamer bio" in frame.content
+        assert isinstance(app.screen, InfoModal)
+        assert "Playing games" in app.screen.query_one("#info-title", Static).content
+        assert "A cool streamer bio" in app.screen.query_one("#bio", Static).content
         await pilot.press("i")
+        await pilot.pause()
+        assert not isinstance(app.screen, InfoModal)
         frame2 = app.query_one("#frame")
-        assert app.info_visible is False
-        # overlay closed, back to normal view — bio text and overlay label are gone,
-        # even though the header legitimately still shows the (truncated) title for
-        # the currently-watched stream, so we can't assert "Playing games" is absent.
-        assert "A cool streamer bio" not in frame2.content
-        assert "Channel bio:" not in frame2.content
         assert "PRIORITY LIST" in frame2.content
 
 
@@ -385,7 +383,7 @@ async def test_i_does_nothing_when_no_current_stream(tmp_path, monkeypatch):
         await pilot.pause()
         assert app.current_stream is None
         await pilot.press("i")
-        assert app.info_visible is False
+        assert not isinstance(app.screen, InfoModal)
 
 
 @pytest.mark.asyncio
@@ -406,17 +404,18 @@ async def test_overlay_blocks_navigation_and_launch(tmp_path, monkeypatch):
         app.current_stream = "alpha"
         app.live_streams = {"alpha": {"title": "t", "game": "g", "viewers": 1, "started_at": None}}
         await pilot.press("i")
-        assert app.info_visible is True
+        assert isinstance(app.screen, InfoModal)
         starting_index = app.nav.index
 
-        await pilot.press("j")  # should be swallowed
+        await pilot.press("j")  # should be swallowed by the modal, not reach the list
         assert app.nav.index == starting_index
 
-        await pilot.press("enter")  # should be swallowed
+        await pilot.press("enter")  # should be swallowed, not launch a stream
         assert not control_file.exists()
 
         await pilot.press("i")  # this should still close it
-        assert app.info_visible is False
+        await pilot.pause()
+        assert not isinstance(app.screen, InfoModal)
 
 
 @pytest.mark.asyncio
@@ -436,12 +435,20 @@ async def test_quit_requires_confirmation(tmp_path, monkeypatch):
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.press("q")
-        assert exited["called"] is False  # first press just arms confirmation
-        assert app.quit_confirm.armed is True
-        frame = app.query_one("#frame")
-        assert "Press q again to quit" in frame.content
+        await pilot.pause()
+        assert exited["called"] is False  # just opens the confirm modal
+        assert isinstance(app.screen, QuitConfirmModal)
+
+        await pilot.press("escape")  # cancel — should not exit
+        await pilot.pause()
+        assert exited["called"] is False
+        assert not isinstance(app.screen, QuitConfirmModal)
+
         await pilot.press("q")
-        assert exited["called"] is True  # second press confirms
+        await pilot.pause()
+        await pilot.press("enter")  # confirm
+        await pilot.pause()
+        assert exited["called"] is True
 
 
 @pytest.mark.asyncio

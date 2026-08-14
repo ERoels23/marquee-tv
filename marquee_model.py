@@ -75,19 +75,3 @@ class AdHocFlow:
         self.state = AdHocFlowState.IDLE
         self.buffer = ""
         self.pending_name = ""
-
-
-class QuitConfirm:
-    def __init__(self):
-        self.armed = False
-
-    def request(self) -> None:
-        self.armed = True
-
-    def cancel(self) -> None:
-        self.armed = False
-
-    def confirm(self) -> bool:
-        was_armed = self.armed
-        self.armed = False
-        return was_armed
