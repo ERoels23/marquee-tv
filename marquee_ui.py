@@ -26,7 +26,6 @@ STREAMERS_FILE = SCRIPT_DIR / "streamers.txt"
 STATUS_FILE = SCRIPT_DIR / ".status.json"
 LAST_SEEN_FILE = SCRIPT_DIR / ".last_seen.json"
 CONTROL_FILE = SCRIPT_DIR / ".control"
-TWITCH_USER_ID = "60132775"
 API_UPDATE_INTERVAL = 60
 REFRESH_INTERVAL = 1.0
 TRANSITION_DURATION = 5.0
@@ -196,27 +195,35 @@ class MarqueeApp(App):
         return result.returncode == 0
 
     def poll_live_streams_from_api(self) -> Dict[str, Dict]:
-        """Direct Twitch API poll — fallback used only when the daemon isn't running."""
+        """Direct Twitch API poll — fallback used only when the daemon isn't running.
+        Queries by explicit user_login rather than /streams/followed, since the
+        priority list can include streamers the account doesn't follow — a
+        followed-only query would silently never report them live."""
+        usernames = [e.username for e in self.entries]
+        if not usernames:
+            return {}
+        live: Dict[str, Dict] = {}
         try:
-            result = subprocess.run(
-                ["/usr/bin/twitch", "api", "get", "/streams/followed", "-q", f"user_id={TWITCH_USER_ID}"],
-                capture_output=True, text=True, timeout=10,
-            )
-            if result.returncode != 0:
-                return {}
-            data = json.loads(result.stdout)
-            live = {}
-            for stream in data.get('data', []):
-                name = stream['user_name'].lower()
-                live[name] = {
-                    'title': stream['title'],
-                    'game': stream['game_name'],
-                    'viewers': stream['viewer_count'],
-                    'started_at': stream.get('started_at'),
-                }
+            for i in range(0, len(usernames), 100):  # Helix caps user_login at 100/request
+                batch = usernames[i:i + 100]
+                cmd = ["/usr/bin/twitch", "api", "get", "streams"]
+                for name in batch:
+                    cmd += ["-q", f"user_login={name}"]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                if result.returncode != 0:
+                    continue
+                data = json.loads(result.stdout)
+                for stream in data.get('data', []):
+                    name = stream['user_login'].lower()
+                    live[name] = {
+                        'title': stream['title'],
+                        'game': stream['game_name'],
+                        'viewers': stream['viewer_count'],
+                        'started_at': stream.get('started_at'),
+                    }
             return live
         except Exception:
-            return {}
+            return live
 
     def poll_single_stream_from_api(self, streamer: str) -> Optional[Dict]:
         """Query Twitch for one streamer's live info, regardless of follow status."""
@@ -340,6 +347,7 @@ class MarqueeApp(App):
                 title=info.get('title', '') if info else '',
                 started_at=info.get('started_at') if info else None,
                 last_seen=self.last_seen.get(entry.username),
+                username=entry.username,
             ))
         return rows
 
@@ -399,9 +407,12 @@ class MarqueeApp(App):
             style=B,
         ))
         rows = self._row_data()
+        last_index = len(rows) - 1
         for i, row in enumerate(rows):
             if i == self.nav.index:
-                collapsed = render_row_collapsed(row, inner_width - 3)
+                if i > 0:
+                    lines.append(Text("║" + " " * inner_width + "║", style=B))
+                collapsed = render_row_collapsed(row, inner_width - 3, highlighted=True)
                 lines.append(self._styled_line(
                     ("║", B), ("▶ " + collapsed + " ", HIGHLIGHT_STYLE), ("║", B),
                 ))
@@ -409,6 +420,8 @@ class MarqueeApp(App):
                 lines.append(self._styled_line(
                     ("║", B), ("  " + detail + "  ", HIGHLIGHT_STYLE), ("║", B),
                 ))
+                if i < last_index:
+                    lines.append(Text("║" + " " * inner_width + "║", style=B))
             else:
                 collapsed = render_row_collapsed(row, list_inner)
                 lines.append(self._styled_line(

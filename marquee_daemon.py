@@ -29,9 +29,6 @@ CHECK_INTERVAL = 10  # Check for new streams and control signals every 10 second
 API_UPDATE_INTERVAL = 60  # Only query Twitch API every 60 seconds (rate limiting)
 GRACE_PERIOD = 600  # 10 minutes before auto-switching (in seconds)
 
-# Twitch API user ID (from your twitchlive function)
-TWITCH_USER_ID = "60132775"
-
 
 def mpv_socket_path(streamer: str) -> Path:
     return SCRIPT_DIR / f".mpv-{streamer}.sock"
@@ -106,41 +103,46 @@ class TwitchTVController:
 
     def get_live_streams(self) -> Dict[str, Dict]:
         """
-        Get list of live streams from followed accounts using Twitch CLI.
+        Get live status for every streamer in the priority list, using Twitch CLI.
+        Queries by explicit user_login rather than /streams/followed, since the
+        priority list can (and does) include streamers the account doesn't
+        follow — a followed-only query would silently never report them live.
         Returns dict mapping streamer name to stream info {title, game, viewers}
         """
+        if not self.priority_list:
+            return {}
+        live_streams: Dict[str, Dict] = {}
         try:
-            result = subprocess.run(
-                ["/usr/bin/twitch", "api", "get", "/streams/followed", "-q", f"user_id={TWITCH_USER_ID}"],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
+            # Helix caps user_login at 100 per request; batch defensively.
+            for i in range(0, len(self.priority_list), 100):
+                batch = self.priority_list[i:i + 100]
+                cmd = ["/usr/bin/twitch", "api", "get", "streams"]
+                for streamer in batch:
+                    cmd += ["-q", f"user_login={streamer}"]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
 
-            if result.returncode != 0:
-                print(f"Error querying Twitch API: {result.stderr}")
-                return {}
+                if result.returncode != 0:
+                    print(f"Error querying Twitch API: {result.stderr}")
+                    continue
 
-            data = json.loads(result.stdout)
-            live_streams = {}
-
-            for stream in data.get('data', []):
-                streamer_name = stream['user_name'].lower()
-                live_streams[streamer_name] = {
-                    'title': stream['title'],
-                    'game': stream['game_name'],
-                    'viewers': stream['viewer_count'],
-                    'started_at': stream.get('started_at'),
-                }
+                data = json.loads(result.stdout)
+                for stream in data.get('data', []):
+                    streamer_name = stream['user_login'].lower()
+                    live_streams[streamer_name] = {
+                        'title': stream['title'],
+                        'game': stream['game_name'],
+                        'viewers': stream['viewer_count'],
+                        'started_at': stream.get('started_at'),
+                    }
 
             return live_streams
 
         except subprocess.TimeoutExpired:
             print("Timeout querying Twitch API")
-            return {}
+            return live_streams
         except (json.JSONDecodeError, KeyError) as e:
             print(f"Error parsing Twitch API response: {e}")
-            return {}
+            return live_streams
 
     def get_highest_priority_live(self, live_streams: Dict) -> Optional[str]:
         """Return the highest priority streamer that's currently live"""

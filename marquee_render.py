@@ -1,8 +1,9 @@
 """Pure line-rendering for the Marquee.tv Textual UI. No I/O, no Textual imports.
 
-All widths are in terminal *cells*, not Python characters — emoji indicators
-(🟢/🔴) render as 2 cells wide, so `rich.cells.cell_len`/`set_cell_size` are
-used everywhere instead of `len()`/slicing to keep box borders aligned.
+All widths are in terminal *cells*, not Python characters — emoji/wide
+indicators (🟢/⚪) render as 2 cells wide, so `rich.cells.cell_len`/
+`set_cell_size` are used everywhere instead of `len()`/slicing to keep box
+borders aligned.
 """
 from dataclasses import dataclass
 from typing import List, Optional
@@ -12,7 +13,6 @@ from rich.cells import cell_len, set_cell_size
 from ui_format import format_viewers, format_uptime, format_last_seen, truncate_text
 
 NAME_COL = 16
-GAME_COL = 18
 
 
 @dataclass
@@ -36,10 +36,11 @@ class RowData:
     title: str = ""
     started_at: Optional[str] = None
     last_seen: Optional[str] = None
+    username: str = ""
 
 
 def _dot(is_live: bool) -> str:
-    return "\U0001F7E2" if is_live else "\U0001F534"  # green / red circle
+    return "\U0001F7E2" if is_live else "⚪"  # green (on) / grey (off) circle
 
 
 def _justify(left: str, right: str, width: int) -> str:
@@ -78,18 +79,30 @@ def render_header(header: HeaderData, width: int) -> List[str]:
     return [line1, line2, line3]
 
 
-def render_row_collapsed(row: RowData, width: int) -> str:
-    name = set_cell_size(truncate_text(row.name, NAME_COL), NAME_COL)
-    game = set_cell_size(truncate_text(row.game, GAME_COL), GAME_COL) if row.is_live else " " * GAME_COL
-    viewers_text = format_viewers(row.viewers) if row.is_live and row.viewers is not None else ""
-    left = f"{_dot(row.is_live)} {name}{game}"
-    return _justify(left, viewers_text, width)
+def render_row_collapsed(row: RowData, width: int, highlighted: bool = False) -> str:
+    name = row.name
+    if highlighted and row.username and row.username != row.name:
+        name = f"{row.name} ({row.username})"
+    if not highlighted:
+        name = set_cell_size(truncate_text(name, NAME_COL), NAME_COL)
+    # Category is intentionally left untruncated (plenty of horizontal room);
+    # _justify's own overflow guard is the only thing that would ever cut it.
+    left = f"{_dot(row.is_live)} {name}"
+    if row.is_live and row.game:
+        left += f"  {row.game}"
+
+    if row.is_live:
+        uptime_text = f"live {format_uptime(row.started_at)}" if row.started_at else ""
+        viewers_text = format_viewers(row.viewers) if row.viewers is not None else ""
+        right = f"{uptime_text} {viewers_text}".strip()
+    else:
+        right = ""
+    return _justify(left, right, width)
 
 
 def render_row_expanded_detail(row: RowData, width: int) -> str:
     if row.is_live:
-        uptime = format_uptime(row.started_at) if row.started_at else ""
-        detail = f'"{row.title}" · live {uptime}' if uptime else f'"{row.title}"'
+        detail = f'"{row.title}"'
     else:
         detail = f"last live: {format_last_seen(row.last_seen)}"
     return set_cell_size(truncate_text("  " + detail, width), width)

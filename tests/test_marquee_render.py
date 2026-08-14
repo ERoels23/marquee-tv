@@ -45,20 +45,49 @@ def test_header_border_label_ad_hoc():
 
 
 def test_render_row_collapsed_live():
-    row = RowData(name="Jerma", is_live=True, viewers=12400, game="Just Chatting")
-    line = render_row_collapsed(row, 50)
-    assert cell_len(line) == 50
+    row = RowData(
+        name="Jerma", is_live=True, viewers=12400, game="Just Chatting",
+        started_at="2026-08-13T10:00:00Z",
+    )
+    line = render_row_collapsed(row, 60)
+    assert cell_len(line) == 60
     assert line.startswith("\U0001F7E2 Jerma")
     assert "12k" in line
     assert "Just Chatting" in line
+    assert "live" in line  # uptime now shown on the collapsed line, not just detail
 
 
 def test_render_row_collapsed_offline_no_viewers_or_game():
     row = RowData(name="Northernlion", is_live=False)
     line = render_row_collapsed(row, 50)
     assert cell_len(line) == 50
-    assert line.startswith("\U0001F534 Northernlion")
+    assert line.startswith("⚪ Northernlion")
     assert "None" not in line
+
+
+def test_render_row_collapsed_category_not_truncated():
+    long_game = "A" * 60
+    row = RowData(name="X", is_live=True, viewers=1, game=long_game, started_at=None)
+    line = render_row_collapsed(row, 120)
+    assert long_game in line
+
+
+def test_render_row_collapsed_highlighted_shows_username_in_parens():
+    row = RowData(name="Apollo", is_live=False, username="dumbdog")
+    line = render_row_collapsed(row, 50, highlighted=True)
+    assert "Apollo (dumbdog)" in line
+
+
+def test_render_row_collapsed_highlighted_omits_parens_when_no_nickname():
+    row = RowData(name="dumbdog", is_live=False, username="dumbdog")
+    line = render_row_collapsed(row, 50, highlighted=True)
+    assert "(dumbdog)" not in line
+
+
+def test_render_row_collapsed_not_highlighted_omits_username_paren():
+    row = RowData(name="Apollo", is_live=False, username="dumbdog")
+    line = render_row_collapsed(row, 50, highlighted=False)
+    assert "(dumbdog)" not in line
 
 
 def test_render_row_expanded_detail_live():
@@ -69,7 +98,9 @@ def test_render_row_expanded_detail_live():
     detail = render_row_expanded_detail(row, 60)
     assert cell_len(detail) == 60
     assert '"doing bit stuff"' in detail
-    assert "live" in detail
+    # uptime moved up to the collapsed line — no longer duplicated here, and
+    # this is also what used to get truncated away by a very long title.
+    assert "live" not in detail
 
 
 def test_render_row_expanded_detail_offline_unknown():

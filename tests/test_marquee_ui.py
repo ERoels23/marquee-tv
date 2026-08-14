@@ -52,6 +52,48 @@ async def test_frame_width_tracks_terminal_and_updates_on_resize(tmp_path, monke
 
 
 @pytest.mark.asyncio
+async def test_blank_line_spacing_around_highlighted_row(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\nbeta\ngamma\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+
+    def is_blank_breakout(line) -> bool:
+        text = line.plain
+        return text.startswith("║") and text.endswith("║") and text[1:-1].strip() == ""
+
+    app = MarqueeApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+
+        # First entry highlighted: no blank line above (box border instead), one below.
+        app.nav.index = 0
+        app.render_frame()
+        lines = app.query_one("#frame").content.split("\n")
+        marker_idx = next(i for i, l in enumerate(lines) if l.plain.startswith("║▶"))
+        assert not is_blank_breakout(lines[marker_idx - 1])
+        assert is_blank_breakout(lines[marker_idx + 2])  # past collapsed + detail lines
+
+        # Middle entry highlighted: blank line both above and below.
+        app.nav.index = 1
+        app.render_frame()
+        lines = app.query_one("#frame").content.split("\n")
+        marker_idx = next(i for i, l in enumerate(lines) if l.plain.startswith("║▶"))
+        assert is_blank_breakout(lines[marker_idx - 1])
+        assert is_blank_breakout(lines[marker_idx + 2])
+
+        # Last entry highlighted: blank line above, none below (box border instead).
+        app.nav.index = 2
+        app.render_frame()
+        lines = app.query_one("#frame").content.split("\n")
+        marker_idx = next(i for i, l in enumerate(lines) if l.plain.startswith("║▶"))
+        assert is_blank_breakout(lines[marker_idx - 1])
+        assert not is_blank_breakout(lines[marker_idx + 2])
+
+
+@pytest.mark.asyncio
 async def test_frame_height_fills_terminal_and_updates_on_resize(tmp_path, monkeypatch):
     streamers_file = tmp_path / "streamers.txt"
     streamers_file.write_text("teststreamer\n")
@@ -398,6 +440,37 @@ async def test_oneshot_poll_stops_timer_when_process_exits(tmp_path, monkeypatch
     fake_timer.stop.assert_called_once()
     assert "gronk" not in app.one_shots
     assert not socket_path.exists()
+
+
+def test_poll_live_streams_from_api_queries_by_user_login_not_followed(monkeypatch):
+    # Regression: /streams/followed only returns channels the Twitch account
+    # actually follows, so any priority-list entry that isn't followed could
+    # never register as live (and would never get a last_seen timestamp) even
+    # while genuinely streaming. Query by explicit user_login instead.
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return mock.Mock(returncode=0, stdout=json.dumps({"data": [
+            {"user_login": "alpha", "title": "t1", "game_name": "g1", "viewer_count": 5, "started_at": "2026-01-01T00:00:00Z"},
+            {"user_login": "beta", "title": "t2", "game_name": "g2", "viewer_count": 9, "started_at": None},
+        ]}))
+
+    monkeypatch.setattr("marquee_ui.subprocess.run", fake_run)
+    app = MarqueeApp.__new__(MarqueeApp)
+    from priority_list import StreamerEntry
+    app.entries = [StreamerEntry(username="alpha"), StreamerEntry(username="beta"), StreamerEntry(username="gamma")]
+
+    live = app.poll_live_streams_from_api()
+
+    assert "user_login=alpha" in captured["cmd"]
+    assert "user_login=beta" in captured["cmd"]
+    assert "user_login=gamma" in captured["cmd"]
+    assert "/streams/followed" not in " ".join(captured["cmd"])
+    assert live == {
+        "alpha": {"title": "t1", "game": "g1", "viewers": 5, "started_at": "2026-01-01T00:00:00Z"},
+        "beta": {"title": "t2", "game": "g2", "viewers": 9, "started_at": None},
+    }
 
 
 def test_poll_single_stream_from_api_queries_by_user_login(monkeypatch):
