@@ -146,13 +146,19 @@ class TwitchTVController:
 
     def backfill_last_seen(self) -> None:
         """One-time startup pass: for any priority-list entry with no last_seen
-        data (never personally observed live since last_seen.json was created),
-        ask Twitch for their most recent broadcast VOD and use its start time.
-        This only reaches back as far as VOD retention allows (14 days, 60 for
-        Partners) and returns nothing for channels with VODs disabled — it's a
-        best-effort backfill, not a substitute for the daemon's own polling.
+        data, or with a timestamp but no title yet (e.g. backfilled before the
+        title field existed, or personally observed live before that too),
+        ask Twitch for their most recent broadcast VOD and use its start time
+        and title. This only reaches back as far as VOD retention allows
+        (14 days, 60 for Partners) and returns nothing for channels with VODs
+        disabled — it's a best-effort backfill, not a substitute for the
+        daemon's own polling (which is the only source for category, since
+        VOD history has no category field).
         """
-        missing = [s for s in self.priority_list if s not in self.last_seen]
+        missing = [
+            s for s in self.priority_list
+            if s not in self.last_seen or not self.last_seen[s].get('title')
+        ]
         if not missing:
             return
         print(f"Backfilling last-seen data for {len(missing)} streamer(s)...")
@@ -189,12 +195,16 @@ class TwitchTVController:
                     continue
                 videos = json.loads(result.stdout).get('data', [])
                 if videos:
-                    # VOD history has no category field, only title — game
-                    # stays unknown until we personally observe them live.
+                    # Merge rather than overwrite: an existing timestamp (from
+                    # a prior backfill or from having actually been observed
+                    # live) is at least as good as the VOD's, and VOD history
+                    # has no category field, so game — if already known — is
+                    # preserved rather than clobbered with None.
+                    existing = self.last_seen.get(streamer, {})
                     self.last_seen[streamer] = {
-                        "at": videos[0]['created_at'],
-                        "game": None,
-                        "title": videos[0].get('title'),
+                        "at": existing.get('at') or videos[0]['created_at'],
+                        "game": existing.get('game'),
+                        "title": existing.get('title') or videos[0].get('title'),
                     }
                     updated = True
             except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError):

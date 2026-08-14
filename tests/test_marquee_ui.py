@@ -12,20 +12,77 @@ from marquee_model import AdHocFlowState
 
 
 @pytest.mark.asyncio
-async def test_app_boots_and_shows_idle_header(tmp_path, monkeypatch):
+async def test_app_boots_and_shows_daemon_offline_when_daemon_not_running(tmp_path, monkeypatch):
     streamers_file = tmp_path / "streamers.txt"
     streamers_file.write_text("teststreamer|Test\n")
     monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
     monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
     monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
     monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: False)
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        frame = app.query_one("#frame")
+        assert "Daemon Offline" in frame.content
+        assert "No stream active" not in frame.content
+        assert "Test" in frame.content  # priority list still shows regardless
+
+
+@pytest.mark.asyncio
+async def test_app_shows_no_stream_active_when_daemon_running_but_idle(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("teststreamer|Test\n")
+    status_file = tmp_path / ".status.json"
+    status_file.write_text(json.dumps({"current_stream": None, "stream_alive": False, "live_streams": {}}))
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", status_file)
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: True)
 
     app = MarqueeApp()
     async with app.run_test() as pilot:
         await pilot.pause()
         frame = app.query_one("#frame")
         assert "No stream active" in frame.content
-        assert "Test" in frame.content  # nickname from streamers.txt shows in the list
+        assert "Daemon Offline" not in frame.content
+
+
+@pytest.mark.asyncio
+async def test_stopping_daemon_shows_daemon_offline_not_stale_stream_name(tmp_path, monkeypatch):
+    # Regression: stopping the daemon left current_stream/live_streams stale,
+    # so the NOW WATCHING box kept showing the previously-playing channel
+    # instead of reflecting that nothing is being managed anymore.
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("teststreamer\n")
+    status_file = tmp_path / ".status.json"
+    status_file.write_text(json.dumps({
+        "current_stream": "teststreamer", "stream_alive": True,
+        "live_streams": {"teststreamer": {"title": "t", "game": "g", "viewers": 1, "started_at": None}},
+    }))
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", status_file)
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+
+    daemon_state = {"running": True}
+    monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: daemon_state["running"])
+    monkeypatch.setattr(MarqueeApp, "stop_service", lambda self: daemon_state.__setitem__("running", False))
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.current_stream == "teststreamer"
+
+        await pilot.press("x")
+        await pilot.pause()
+
+        assert app.current_stream is None
+        frame = app.query_one("#frame")
+        assert "Daemon Offline" in frame.content
+        assert "teststreamer" not in frame.content.split("PRIORITY LIST")[0]  # not in NOW WATCHING box
 
 
 @pytest.mark.asyncio
@@ -663,7 +720,7 @@ async def test_overlay_blocks_navigation_and_launch(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_quit_requires_confirmation(tmp_path, monkeypatch):
+async def test_quit_instant_when_daemon_not_running(tmp_path, monkeypatch):
     streamers_file = tmp_path / "streamers.txt"
     streamers_file.write_text("alpha\n")
     monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
@@ -682,24 +739,108 @@ async def test_quit_requires_confirmation(tmp_path, monkeypatch):
         await pilot.pause()
         await pilot.press("q")
         await pilot.pause()
-        assert exited["called"] is False  # just opens the confirm modal
+        # No daemon to optionally keep running — no dialog, quit immediately.
+        assert not isinstance(app.screen, QuitConfirmModal)
+        assert exited["called"] is True
+        assert any(call[0][:2] == ["pkill", "-x"] and "chatterino" in call[0] for call in run_calls)
+
+
+@pytest.mark.asyncio
+async def test_quit_menu_navigation_and_escape_cancels(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: True)
+
+    exited = {"called": False}
+    monkeypatch.setattr(MarqueeApp, "exit", lambda self, *a, **kw: exited.__setitem__("called", True))
+    stop_calls = {"count": 0}
+    monkeypatch.setattr(MarqueeApp, "stop_service", lambda self: stop_calls.__setitem__("count", stop_calls["count"] + 1))
+    monkeypatch.setattr("subprocess.run", lambda *a, **kw: mock.Mock(returncode=1))
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("q")
+        await pilot.pause()
+        assert exited["called"] is False  # just opens the menu
         assert isinstance(app.screen, QuitConfirmModal)
+        assert app.screen.index == 0  # defaults to "stop"
         # Regression: width:auto on the panel Vertical previously collapsed
         # every child to a 0x0 box (blank popup, no visible text at all).
         for static in app.screen.query(Static):
             assert static.size.width > 0
 
+        await pilot.press("j")  # navigate to "keep"
+        assert app.screen.index == 1
+        await pilot.press("k")  # navigate back to "stop"
+        assert app.screen.index == 0
+
         await pilot.press("escape")  # cancel — should not exit
         await pilot.pause()
         assert exited["called"] is False
+        assert stop_calls["count"] == 0
         assert not isinstance(app.screen, QuitConfirmModal)
 
+
+@pytest.mark.asyncio
+async def test_quit_menu_stop_option_stops_daemon(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: True)
+
+    exited = {"called": False}
+    monkeypatch.setattr(MarqueeApp, "exit", lambda self, *a, **kw: exited.__setitem__("called", True))
+    stop_calls = {"count": 0}
+    monkeypatch.setattr(MarqueeApp, "stop_service", lambda self: stop_calls.__setitem__("count", stop_calls["count"] + 1))
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
         await pilot.press("q")
         await pilot.pause()
-        await pilot.press("enter")  # confirm
+        await pilot.press("enter")  # default selection is "stop"
         await pilot.pause()
+        assert stop_calls["count"] == 1
         assert exited["called"] is True
-        # daemon wasn't running, but quitting must still kill chatterino
+
+
+@pytest.mark.asyncio
+async def test_quit_menu_keep_option_leaves_daemon_running(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: True)
+
+    exited = {"called": False}
+    monkeypatch.setattr(MarqueeApp, "exit", lambda self, *a, **kw: exited.__setitem__("called", True))
+    stop_calls = {"count": 0}
+    monkeypatch.setattr(MarqueeApp, "stop_service", lambda self: stop_calls.__setitem__("count", stop_calls["count"] + 1))
+    run_calls = []
+    monkeypatch.setattr("subprocess.run", lambda *a, **kw: run_calls.append(a) or mock.Mock(returncode=1))
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("q")
+        await pilot.pause()
+        await pilot.press("j")  # move to "keep"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert stop_calls["count"] == 0  # daemon left running
+        assert exited["called"] is True
+        # daemon kept running, but quitting must still kill chatterino
+        assert any(call[0][:2] == ["pkill", "-x"] and "chatterino" in call[0] for call in run_calls)
         assert any(call[0][:2] == ["pkill", "-x"] and "chatterino" in call[0] for call in run_calls)
 
 

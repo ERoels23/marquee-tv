@@ -25,6 +25,7 @@ class HeaderData:
     started_at: Optional[str] = None
     title: str = ""
     ad_hoc_mode: Optional[str] = None  # "override" | "temporary" | "oneshot" | None
+    inactive_message: str = "No stream active"  # shown when active=False
 
 
 @dataclass
@@ -68,7 +69,7 @@ def render_header(header: HeaderData, width: int) -> List[str]:
     """Returns exactly 3 lines, each exactly `width` cells wide."""
     if not header.active:
         return [
-            set_cell_size("No stream active", width),
+            set_cell_size(header.inactive_message, width),
             " " * width,
             " " * width,
         ]

@@ -77,13 +77,45 @@ def test_backfill_last_seen_uses_most_recent_vod_for_missing_entries(monkeypatch
 def test_backfill_last_seen_skips_entirely_when_nothing_missing(monkeypatch):
     ctrl = TwitchTVController.__new__(TwitchTVController)
     ctrl.priority_list = ["alpha"]
-    ctrl.last_seen = {"alpha": {"at": "2026-01-01T00:00:00+00:00", "game": None, "title": None}}
+    # Has both a timestamp and a title, so it doesn't count as missing —
+    # entries with a timestamp but no title (e.g. backfilled before the
+    # title field existed) DO still count as missing; see the retry test.
+    ctrl.last_seen = {"alpha": {"at": "2026-01-01T00:00:00+00:00", "game": None, "title": "t"}}
 
     def fake_run(*a, **kw):
         raise AssertionError("should not query the API when nothing is missing")
 
     monkeypatch.setattr("marquee_daemon.subprocess.run", fake_run)
     ctrl.backfill_last_seen()  # must not raise
+
+
+def test_backfill_last_seen_retries_entries_missing_only_title(monkeypatch):
+    # Entries backfilled before the title field existed (or observed live
+    # before then) have a timestamp but no title — these should still be
+    # retried, merging in the title without clobbering the existing timestamp
+    # or a previously-known game (VOD history has no category field).
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    ctrl.priority_list = ["alpha"]
+    ctrl.last_seen = {"alpha": {"at": "2026-01-01T00:00:00+00:00", "game": "Just Chatting", "title": None}}
+    ctrl._save_last_seen = lambda: None
+
+    def fake_run(cmd, **kwargs):
+        if "users" in cmd:
+            return mock.Mock(returncode=0, stdout=json.dumps({"data": [{"login": "alpha", "id": "111"}]}))
+        if "videos" in cmd:
+            return mock.Mock(returncode=0, stdout=json.dumps({"data": [
+                {"created_at": "2026-08-01T10:00:00Z", "title": "Newly fetched title"},
+            ]}))
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr("marquee_daemon.subprocess.run", fake_run)
+    ctrl.backfill_last_seen()
+
+    assert ctrl.last_seen["alpha"] == {
+        "at": "2026-01-01T00:00:00+00:00",  # existing timestamp preserved, not overwritten
+        "game": "Just Chatting",  # existing game preserved
+        "title": "Newly fetched title",  # missing title filled in
+    }
 
 
 def test_parse_legacy_switch():

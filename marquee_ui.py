@@ -44,8 +44,9 @@ HIGHLIGHT_STYLE = "bold #1e1e2e on #b4befe"  # dark text on Lavender bar
 LIVE_DOT_STYLE = "#a6e3a1"  # Green — lit
 OFFLINE_DOT_STYLE = "#6c7086"  # Grey — unlit
 
-class QuitConfirmModal(ModalScreen[bool]):
-    """Centered popup asking whether to quit and stop the daemon."""
+class QuitConfirmModal(ModalScreen[Optional[str]]):
+    """Centered popup letting the user pick whether quitting also stops the
+    daemon. Dismisses with "stop", "keep", or None (escaped — stay open)."""
 
     # width: auto on a Vertical panel doesn't reliably measure Static children
     # in this Textual version (they resolve to a degenerate 0-width box) — use
@@ -56,25 +57,53 @@ class QuitConfirmModal(ModalScreen[bool]):
         align: center middle;
     }}
     QuitConfirmModal > Vertical {{
-        width: 42;
+        width: 46;
         height: auto;
         border: round {BORDER_COLOR};
         padding: 1 2;
     }}
     """
 
+    OPTIONS = [
+        ("stop", "Quit and stop daemon"),
+        ("keep", "Quit and keep daemon running"),
+    ]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.index = 0
+
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Static("Quit and stop daemon?")
-            yield Static("[Enter] Quit   [Esc] Cancel")
+            yield Static("Quit Marquee.tv?")
+            yield Static("")
+            for i in range(len(self.OPTIONS)):
+                yield Static("", id=f"quit-option-{i}")
+
+    def on_mount(self) -> None:
+        self._render_options()
+
+    def _render_options(self) -> None:
+        for i, (_, label) in enumerate(self.OPTIONS):
+            widget = self.query_one(f"#quit-option-{i}", Static)
+            if i == self.index:
+                widget.update(Text(f"▶ {label}", style=HIGHLIGHT_STYLE))
+            else:
+                widget.update(f"  {label}")
 
     def on_key(self, event: events.Key) -> None:
         event.stop()
         event.prevent_default()
-        if event.key == "enter":
-            self.dismiss(True)
+        if event.key in ("down", "j"):
+            self.index = (self.index + 1) % len(self.OPTIONS)
+            self._render_options()
+        elif event.key in ("up", "k"):
+            self.index = (self.index - 1) % len(self.OPTIONS)
+            self._render_options()
+        elif event.key == "enter":
+            self.dismiss(self.OPTIONS[self.index][0])
         elif event.key == "escape":
-            self.dismiss(False)
+            self.dismiss(None)
 
 
 class InfoModal(ModalScreen):
@@ -331,6 +360,8 @@ class MarqueeApp(App):
         ]
 
     def _header_data(self) -> HeaderData:
+        if not self._daemon_was_running:
+            return HeaderData(active=False, inactive_message="Daemon Offline")
         if not self.current_stream:
             return HeaderData(active=False)
         info = self.live_streams.get(self.current_stream, {})
@@ -560,18 +591,28 @@ class MarqueeApp(App):
     def action_stop_service(self) -> None:
         if self.daemon_running():
             self.stop_service()
+            self.current_stream = None
+            self.stream_alive = False
             self.refresh_data(force=True)
             self.render_frame()
 
     def action_request_quit(self) -> None:
-        def handle_result(confirmed: bool) -> None:
-            if confirmed:
-                if self.daemon_running():
-                    self.stop_service()  # also kills chatterino
-                else:
-                    import subprocess as sp
-                    sp.run(["pkill", "-x", "chatterino"], capture_output=True)
+        import subprocess as sp
+
+        if not self.daemon_running():
+            # Nothing to ask about — there's no daemon to optionally keep running.
+            sp.run(["pkill", "-x", "chatterino"], capture_output=True)
+            self.exit()
+            return
+
+        def handle_result(choice: Optional[str]) -> None:
+            if choice == "stop":
+                self.stop_service()  # also kills chatterino
                 self.exit()
+            elif choice == "keep":
+                sp.run(["pkill", "-x", "chatterino"], capture_output=True)
+                self.exit()
+            # None (escaped) — stay open, don't quit
 
         self.push_screen(QuitConfirmModal(), handle_result)
 
