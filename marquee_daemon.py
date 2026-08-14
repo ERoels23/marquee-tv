@@ -11,7 +11,7 @@ import os
 import signal
 import sys
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict
 import threading
 
@@ -301,7 +301,7 @@ class TwitchTVController:
                 if current_time - self.last_api_update >= API_UPDATE_INTERVAL:
                     self.live_streams = self.get_live_streams()
                     self.last_api_update = current_time
-                    now_iso = datetime.now().isoformat()
+                    now_iso = datetime.now(timezone.utc).isoformat()
                     for streamer in self.live_streams:
                         self.last_seen[streamer] = now_iso
                     self._save_last_seen()
