@@ -241,6 +241,7 @@ class MarqueeApp(App):
         self.last_footer_key: Optional[str] = None
         self._terminal_width = MIN_OUTER_WIDTH
         self._terminal_height = MIN_OUTER_HEIGHT
+        self.list_scroll_offset = 0  # index of the first entry currently shown, for long lists
 
     def compose(self) -> ComposeResult:
         yield Static(id="frame", markup=False)
@@ -454,6 +455,42 @@ class MarqueeApp(App):
             ))
         return rows
 
+    def _compute_list_window(self, total: int, available_lines: int) -> tuple:
+        """Decide which slice of the priority list to actually render, so a
+        list longer than fits on screen scrolls (minimum-scroll: the window
+        only moves enough to keep the highlighted entry in view) instead of
+        silently clipping off the bottom with no way to tell it happened.
+        Returns (start, end, show_top_indicator, show_bottom_indicator)."""
+        if total == 0:
+            return 0, 0, False, False
+        idx = self.nav.index if 0 <= self.nav.index < total else 0
+
+        # A highlighted row costs 4 lines (blank + collapsed + detail + blank)
+        # vs. 1 for a normal row — the "+3" below accounts for that difference
+        # whenever the window includes the highlighted entry, which it always
+        # does here since scroll_offset always brackets idx.
+        full_cost = (total - 1) + 4
+        if full_cost <= available_lines:
+            self.list_scroll_offset = 0
+            return 0, total, False, False
+
+        # Once windowing is active at all, always reserve room for both
+        # indicators (even if only one ends up shown) rather than
+        # conditionally reserving based on the current window's top/bottom
+        # state — that would shrink capacity the moment an indicator first
+        # appears, occasionally jumping the window by 2 rows in one step
+        # instead of the usual 1 as the highlight crosses that boundary.
+        max_count = max(1, available_lines - 2 - 3)
+        start = self.list_scroll_offset
+        if start > idx:
+            start = idx
+        if idx >= start + max_count:
+            start = idx - max_count + 1
+        start = max(0, min(start, max(0, total - max_count)))
+        end = min(total, start + max_count)
+        self.list_scroll_offset = start
+        return start, end, start > 0, end < total
+
     @staticmethod
     def _styled_line(*parts: tuple) -> Text:
         """parts: (text, style_or_None) tuples, concatenated into one styled line."""
@@ -551,8 +588,20 @@ class MarqueeApp(App):
             + "─" * (list_box_width - cell_len(list_label)) + "┐" + " " * MARGIN + "║",
             style=B,
         ))
+
+        terminal_height = max(MIN_OUTER_HEIGHT, self._terminal_height)
+        # Remaining fixed lines after the rows: list bottom border, blank
+        # spacer, footer, outer bottom border.
+        available_lines = max(1, terminal_height - len(lines) - 4)
         rows = self._row_data()
-        for i, row in enumerate(rows):
+        start, end, show_top, show_bottom = self._compute_list_window(len(rows), available_lines)
+        if show_top:
+            indicator = set_cell_size(f"▲ {start} more above", list_inner)
+            lines.append(self._styled_line(
+                ("║" + " " * MARGIN + "│ ", B), (indicator, None), (" │" + " " * MARGIN + "║", B),
+            ))
+        for i in range(start, end):
+            row = rows[i]
             if i == self.nav.index:
                 lines.append(Text("║" + " " * inner_width + "║", style=B))
                 collapsed = render_row_collapsed(row, inner_width - 3, highlighted=True)
@@ -575,6 +624,11 @@ class MarqueeApp(App):
                     (collapsed[:1], dot_style), (collapsed[1:], None),
                     (" │" + " " * MARGIN + "║", B),
                 ))
+        if show_bottom:
+            indicator = set_cell_size(f"▼ {len(rows) - end} more below", list_inner)
+            lines.append(self._styled_line(
+                ("║" + " " * MARGIN + "│ ", B), (indicator, None), (" │" + " " * MARGIN + "║", B),
+            ))
         nav_label = " ↑↓/jk "
         lines.append(Text(
             "║" + " " * MARGIN + "└" + nav_label
@@ -586,7 +640,6 @@ class MarqueeApp(App):
         # Pad with blank bordered lines so the outer box reaches the bottom of
         # the terminal instead of shrink-wrapping to just the priority list —
         # footer + closing border still need to fit below this padding.
-        terminal_height = max(MIN_OUTER_HEIGHT, self._terminal_height)
         padding_needed = terminal_height - len(lines) - 2
         for _ in range(max(0, padding_needed)):
             lines.append(Text("║" + " " * inner_width + "║", style=B))

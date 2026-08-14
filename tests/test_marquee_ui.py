@@ -205,6 +205,62 @@ async def test_frame_height_fills_terminal_and_updates_on_resize(tmp_path, monke
 
 
 @pytest.mark.asyncio
+async def test_long_list_scrolls_to_keep_highlight_visible_with_indicators(tmp_path, monkeypatch):
+    # Regression: a priority list longer than the terminal's visible height
+    # used to silently clip off the bottom (Screen's overflow-y: hidden),
+    # with no scrolling and no indication — navigating past what's on screen
+    # made the highlighted row (and all feedback about where you are)
+    # invisible with no way to tell.
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("\n".join(f"streamer{i}" for i in range(30)) + "\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+
+    app = MarqueeApp()
+    async with app.run_test(size=(100, 24)) as pilot:
+        await pilot.pause()
+        lines = app.query_one("#frame").content.split("\n")
+        assert len(lines) == 24  # still fills exactly the terminal height
+        marker_idx = next(i for i, l in enumerate(lines) if l.plain.startswith("║▶"))
+        assert marker_idx < 24  # highlighted row is actually visible
+        assert not any("more above" in l.plain for l in lines)  # nothing hidden above yet
+        assert any("more below" in l.plain for l in lines)
+
+        for _ in range(25):
+            app.nav.move_down()
+        app.render_frame()
+        lines = app.query_one("#frame").content.split("\n")
+        assert len(lines) == 24
+        marker_idx = next(i for i, l in enumerate(lines) if l.plain.startswith("║▶"))
+        assert marker_idx < 24  # still visible after scrolling past the first screenful
+        assert any("more above" in l.plain for l in lines)
+        assert any("more below" in l.plain for l in lines)
+
+
+@pytest.mark.asyncio
+async def test_long_list_scroll_offset_moves_one_row_at_a_time(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("\n".join(f"streamer{i}" for i in range(30)) + "\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+
+    app = MarqueeApp()
+    async with app.run_test(size=(100, 24)) as pilot:
+        await pilot.pause()
+        prev_offset = app.list_scroll_offset
+        for _ in range(28):  # stop short of wrapping back to index 0
+            app.nav.move_down()
+            app.render_frame()
+            delta = app.list_scroll_offset - prev_offset
+            assert delta in (0, 1), f"scroll offset jumped by {delta} in one step"
+            prev_offset = app.list_scroll_offset
+
+
+@pytest.mark.asyncio
 async def test_frame_width_matches_widget_width_when_content_taller_than_terminal(tmp_path, monkeypatch):
     # Screen defaults to overflow-y: auto, which reserves a scrollbar gutter
     # once content is taller than the terminal (e.g. a long priority list on a
