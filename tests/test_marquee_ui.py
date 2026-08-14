@@ -509,4 +509,4 @@ async def test_oneshot_does_not_relabel_now_watching_box(tmp_path, monkeypatch):
         frame = app.query_one("#frame")
         # The footer always shows a "(/)Ad-hoc" keybinding hint, so check the
         # NOW WATCHING border label specifically rather than the whole frame.
-        assert "(ad-hoc" not in frame.content.lower()
+        assert "(ad-hoc" not in frame.content.plain.lower()

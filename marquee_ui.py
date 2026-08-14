@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Static
@@ -28,6 +29,10 @@ REFRESH_INTERVAL = 1.0
 OUTER_WIDTH = 70
 MARGIN = 2
 
+# Catppuccin Mocha accents (matches the user's terminal/desktop theme).
+BORDER_COLOR = "#74c7ec"  # Sapphire — outer box, NOW WATCHING/PRIORITY LIST boxes, labels, footer
+HIGHLIGHT_STYLE = "bold #1e1e2e on #b4befe"  # dark text on Lavender bar
+
 
 class MarqueeApp(App):
     BINDINGS = [
@@ -45,6 +50,10 @@ class MarqueeApp(App):
 
     def __init__(self):
         super().__init__()
+        # "ansi-dark" maps background/foreground to the terminal's own native
+        # ANSI default colors instead of a fixed RGB, so the app's background
+        # matches whatever theme the user's terminal is configured with.
+        self.theme = "ansi-dark"
         self.entries: List[StreamerEntry] = []
         self.live_streams: Dict[str, Dict] = {}
         self.last_seen: Dict[str, str] = {}
@@ -196,6 +205,14 @@ class MarqueeApp(App):
             ))
         return rows
 
+    @staticmethod
+    def _styled_line(*parts: tuple) -> Text:
+        """parts: (text, style_or_None) tuples, concatenated into one styled line."""
+        line = Text()
+        for content, style in parts:
+            line.append(content, style=style)
+        return line
+
     def render_frame(self) -> None:
         from rich.cells import cell_len, set_cell_size
 
@@ -211,7 +228,7 @@ class MarqueeApp(App):
                 "",
                 "Press i to close",
             ]
-            self.query_one("#frame", Static).update("\n".join(overlay))
+            self.query_one("#frame", Static).update(Text("\n".join(overlay)))
             return
 
         # Widths below are hand-tuned (not the plan's original formulas, which had
@@ -223,11 +240,15 @@ class MarqueeApp(App):
         list_box_width = inner_width - 2 * MARGIN - 2
         list_inner = list_box_width - 2
 
-        lines: List[str] = []
-        lines.append("╔═ Marquee.tv " + "═" * (OUTER_WIDTH - cell_len("╔═ Marquee.tv ") - 1) + "╗")
+        B = BORDER_COLOR
+        lines: List[Text] = []
+        lines.append(Text(
+            "╔═ Marquee.tv " + "═" * (OUTER_WIDTH - cell_len("╔═ Marquee.tv ") - 1) + "╗",
+            style=B,
+        ))
 
         label = f" {header_border_label(self.ad_hoc_mode)} "
-        lines.append("║ ┌" + label + "─" * (header_box_width - cell_len(label)) + "┐ ║")
+        lines.append(Text("║ ┌" + label + "─" * (header_box_width - cell_len(label)) + "┐ ║", style=B))
         if self.ad_hoc.state == AdHocFlowState.TYPING:
             header_lines = [
                 set_cell_size(f"Watch streamer: {self.ad_hoc.buffer}", header_inner),
@@ -243,35 +264,41 @@ class MarqueeApp(App):
         else:
             header_lines = render_header(self._header_data(), header_inner)
         for text in header_lines:
-            lines.append("║ │ " + text + " │ ║")
-        lines.append("║ └" + "─" * header_box_width + "┘ ║")
-        lines.append("║" + " " * inner_width + "║")
+            lines.append(self._styled_line(("║ │ ", B), (text, None), (" │ ║", B)))
+        lines.append(Text("║ └" + "─" * header_box_width + "┘ ║", style=B))
+        lines.append(Text("║" + " " * inner_width + "║", style=B))
 
         list_label = " PRIORITY LIST "
-        lines.append(
+        lines.append(Text(
             "║" + " " * MARGIN + "┌" + list_label
-            + "─" * (list_box_width - cell_len(list_label)) + "┐" + " " * MARGIN + "║"
-        )
+            + "─" * (list_box_width - cell_len(list_label)) + "┐" + " " * MARGIN + "║",
+            style=B,
+        ))
         rows = self._row_data()
         for i, row in enumerate(rows):
             if i == self.nav.index:
                 collapsed = render_row_collapsed(row, inner_width - 3)
-                lines.append("║▶ " + collapsed + " ║")
+                lines.append(self._styled_line(
+                    ("║", B), ("▶ " + collapsed + " ", HIGHLIGHT_STYLE), ("║", B),
+                ))
                 detail = render_row_expanded_detail(row, inner_width - 4)
-                lines.append("║  " + detail + "  ║")
+                lines.append(self._styled_line(("║  ", B), (detail, None), ("  ║", B)))
             else:
                 collapsed = render_row_collapsed(row, list_inner)
-                lines.append("║" + " " * MARGIN + "│ " + collapsed + " │" + " " * MARGIN + "║")
-        lines.append("║" + " " * MARGIN + "└" + "─" * list_box_width + "┘" + " " * MARGIN + "║")
-        lines.append("║" + " " * inner_width + "║")
+                lines.append(self._styled_line(
+                    ("║" + " " * MARGIN + "│ ", B), (collapsed, None), (" │" + " " * MARGIN + "║", B),
+                ))
+        lines.append(Text("║" + " " * MARGIN + "└" + "─" * list_box_width + "┘" + " " * MARGIN + "║", style=B))
+        lines.append(Text("║" + " " * inner_width + "║", style=B))
 
         footer = "(Q)uit (S)tart (X)Stop (E)dit (/)Ad-hoc (I)nfo ↑↓/jk Nav ⏎ Launch"
         if self.quit_confirm.armed:
             footer = "Press q again to quit"
-        lines.append("║ " + set_cell_size(footer, inner_width - 2) + " ║")
-        lines.append("╚" + "═" * inner_width + "╝")
+        lines.append(Text("║ " + set_cell_size(footer, inner_width - 2) + " ║", style=B))
+        lines.append(Text("╚" + "═" * inner_width + "╝", style=B))
 
-        self.query_one("#frame", Static).update("\n".join(lines))
+        frame = Text("\n").join(lines)
+        self.query_one("#frame", Static).update(frame)
 
     def action_move_up(self) -> None:
         self.nav.move_up()
