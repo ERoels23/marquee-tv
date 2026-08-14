@@ -307,6 +307,50 @@ def test_transition_header_lines_content_and_expiry():
     assert app.transition is None  # expired transition clears itself
 
 
+def test_manual_transition_persists_past_5s_while_daemon_hasnt_switched_yet():
+    # Regression: the manual transition fires the instant Enter is pressed,
+    # before the daemon has even seen the request — its own poll interval
+    # plus the actual mpv relaunch can take longer than TRANSITION_DURATION
+    # (5s), so it previously reverted to showing the *old* (still-current)
+    # stream for a gap before the real switch landed and re-triggered a
+    # fresh transition. It should keep animating instead, as long as the
+    # target hasn't landed yet.
+    from marquee_ui import TRANSITION_DURATION, TRANSITION_MAX_WAIT
+
+    app = MarqueeApp()
+    app.current_stream = "northernlion"  # daemon hasn't switched yet
+    app.transition = {
+        "kind": "manual", "started": time.monotonic() - (TRANSITION_DURATION + 1),
+        "target": "crittervision",
+    }
+    lines = app._transition_header_lines(40)
+    assert lines is not None  # still showing, not reverted to the old stream
+    assert app.transition is not None
+
+    # But it does eventually give up if the switch never lands.
+    app.transition = {
+        "kind": "manual", "started": time.monotonic() - (TRANSITION_MAX_WAIT + 1),
+        "target": "crittervision",
+    }
+    lines = app._transition_header_lines(40)
+    assert lines is None
+    assert app.transition is None
+
+
+def test_manual_transition_expires_normally_once_target_reached():
+    from marquee_ui import TRANSITION_DURATION
+
+    app = MarqueeApp()
+    app.current_stream = "crittervision"  # daemon already switched
+    app.transition = {
+        "kind": "manual", "started": time.monotonic() - (TRANSITION_DURATION + 1),
+        "target": "crittervision",
+    }
+    lines = app._transition_header_lines(40)
+    assert lines is None  # normal 5s expiry applies once the target is reached
+    assert app.transition is None
+
+
 def test_refresh_data_does_not_clobber_fresh_api_data_with_stale_status_file(tmp_path, monkeypatch):
     status_file = tmp_path / ".status.json"
     status_file.write_text(json.dumps({

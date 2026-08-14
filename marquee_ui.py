@@ -32,6 +32,13 @@ CONTROL_FILE = SCRIPT_DIR / ".control"
 API_UPDATE_INTERVAL = 60
 REFRESH_INTERVAL = 1.0
 TRANSITION_DURATION = 5.0
+# Manual switches start their transition the instant Enter is pressed, before
+# the daemon has even seen the request — its own poll interval plus the
+# actual mpv relaunch can easily exceed TRANSITION_DURATION, so the "SWITCHING
+# NOW..." animation keeps running past 5s (rather than reverting to the old,
+# now-stale stream) as long as the target hasn't landed yet — bounded by this
+# safety net so it can't get stuck forever if the switch never completes.
+TRANSITION_MAX_WAIT = 30.0
 PENDING_MANUAL_SWITCH_TIMEOUT = 30.0  # bounds how long a stale pending-switch can mislabel a later transition
 
 MIN_OUTER_WIDTH = 60  # floor below which the box layout starts breaking down
@@ -365,7 +372,7 @@ class MarqueeApp(App):
                         and time.monotonic() - pending_time < PENDING_MANUAL_SWITCH_TIMEOUT):
                     kind = "manual"
             self._pending_manual_switch = None
-            self.transition = {"kind": kind, "started": time.monotonic()}
+            self.transition = {"kind": kind, "started": time.monotonic(), "target": self.current_stream}
 
     def _load_last_seen_file(self) -> None:
         if not LAST_SEEN_FILE.exists():
@@ -392,7 +399,14 @@ class MarqueeApp(App):
         if self.transition is None:
             return None
         elapsed = time.monotonic() - self.transition["started"]
-        if elapsed >= TRANSITION_DURATION:
+        target = self.transition.get("target")
+        waiting_on_target = (
+            self.transition["kind"] == "manual"
+            and target is not None
+            and self.current_stream != target
+        )
+        expiry = TRANSITION_MAX_WAIT if waiting_on_target else TRANSITION_DURATION
+        if elapsed >= expiry:
             self.transition = None
             return None
         headline = (
@@ -604,7 +618,7 @@ class MarqueeApp(App):
         self._pending_manual_switch = (streamer, time.monotonic())
         # Immediate feedback rather than waiting for the daemon's status file
         # to confirm the switch, which can lag up to its own poll interval.
-        self.transition = {"kind": "manual", "started": time.monotonic()}
+        self.transition = {"kind": "manual", "started": time.monotonic(), "target": streamer}
         self.render_frame()
 
     def action_ad_hoc_start(self) -> None:
@@ -764,7 +778,7 @@ class MarqueeApp(App):
         self._pending_manual_switch = (streamer, time.monotonic())
         # Immediate feedback rather than waiting for the daemon's status file
         # to confirm the switch, which can lag up to its own poll interval.
-        self.transition = {"kind": "manual", "started": time.monotonic()}
+        self.transition = {"kind": "manual", "started": time.monotonic(), "target": streamer}
         self.render_frame()
 
     def spawn_one_shot(self, streamer: str) -> None:
