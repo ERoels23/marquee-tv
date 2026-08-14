@@ -277,11 +277,14 @@ class TwitchTVController:
             if subprocess.run(["pgrep", "-x", "chatterino"], capture_output=True).returncode != 0:
                 break
             time.sleep(0.1)
-        subprocess.Popen(
-            ["chatterino", "-a", streamer],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
+        try:
+            subprocess.Popen(
+                ["chatterino", "-a", streamer],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+        except FileNotFoundError:
+            print("Warning: chatterino not found on PATH, skipping chat window")
 
         # Launch stream, with a per-streamer MPV IPC socket for live title updates
         if self.current_socket_path is not None:

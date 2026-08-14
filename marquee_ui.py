@@ -874,7 +874,10 @@ class MarqueeApp(App):
             if subprocess.run(["pgrep", "-x", "chatterino"], capture_output=True).returncode != 0:
                 break
             time.sleep(0.1)
-        subprocess.Popen(["chatterino", "-a", streamer], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            subprocess.Popen(["chatterino", "-a", streamer], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except FileNotFoundError:
+            pass
         self.render_frame()
         timer = self.set_interval(API_UPDATE_INTERVAL, lambda: self._poll_one_shot_title(streamer), pause=False)
         if streamer in self.one_shots:
