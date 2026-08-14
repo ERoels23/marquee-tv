@@ -1,13 +1,11 @@
 # Marquee.tv
 
-A Python daemon + Textual TUI that automatically launches your highest-priority
-live Twitch stream and intelligently switches between streams based on your
-preferences — plus ad-hoc stream watching, in-place priority-list editing,
-Chatterino tab sync, and live MPV title updates.
+![Marquee.tv demo](docs/demo.gif)
 
-Marquee.tv is the rebuilt/renamed successor to the old "TwitchTV" curses tool.
-The daemon/UI split and file-based IPC are unchanged; the UI is now Textual
-instead of curses, and several new features were added (see below).
+A textual TUI that automatically launches your highest-priority live Twitch
+stream and intelligently switches between streams based on your preferences —
+plus ad-hoc stream watching, in-place priority-list editing, Chatterino tab
+sync, and live MPV title updates.
 
 ## Features
 
@@ -30,8 +28,8 @@ instead of curses, and several new features were added (see below).
   the channel's bio, fetched from Twitch on demand.
 - **Chatterino integration**: the daemon (and one-shot streams) automatically
   bring Chatterino to the right channel's tab whenever the stream changes.
-  See the note under Troubleshooting — this is currently done by
-  closing-and-reopening Chatterino, not a seamless in-place tab switch.
+  This is currently done by closing and relaunching Chatterino (it restores
+  its tabs on startup), rather than a seamless in-place tab switch.
 - **Live MPV window title updates**: the mpv window's title bar updates
   automatically if the streamer changes game/category or retitles mid-stream,
   without restarting playback.
@@ -55,7 +53,9 @@ instead of curses, and several new features were added (see below).
 
 ### 1. Configure your priority list
 
-Edit `streamers.txt` and add your Twitch streamers in order of preference:
+`streamers.txt` holds your priority list. You don't need to edit it before
+first launch — once the UI is running, press `e` to open it in your editor
+right from inside the TUI (see Usage below). Or edit it directly:
 
 ```
 # Marquee.tv Priority List
@@ -120,24 +120,8 @@ The TUI is a single bordered "Marquee.tv" window containing:
   with live/offline status, category, and viewer count. The highlighted row
   expands to show the full title + uptime (if live) or `last live: <relative
   time>` (if offline, from `.last_seen.json`).
-- A footer with the current hotkey glossary.
-
-**Keybindings:**
-
-| Key | Action |
-|---|---|
-| `↑`/`↓` or `j`/`k` | Move the highlight up/down the priority list |
-| `Enter` | Launch the highlighted stream immediately (no confirmation) |
-| `/` | Start ad-hoc stream entry (see below) |
-| `Esc` | Cancel ad-hoc entry / mode picker |
-| `e` | Edit `streamers.txt` in `$EDITOR` (suspends the TUI, resumes on exit) |
-| `i` | Toggle the info overlay (full title + channel bio) for the current stream |
-| `s` | Start the daemon |
-| `x` | Stop the daemon (and kill mpv) |
-| `q` | Quit — press once to arm, press again to confirm (stops the daemon too) |
-
-The footer always shows a short version of this:
-`(Q)uit (S)tart (X)Stop (E)dit (/)Ad-hoc (I)nfo ↑↓/jk Nav ⏎ Launch`.
+- A footer with the current hotkey glossary — the keybindings are all shown
+  right there as soon as you launch the UI.
 
 ### Ad-hoc stream watching
 
@@ -219,34 +203,6 @@ else:
 When your current stream ends, the daemon automatically launches the next
 highest-priority live stream.
 
-## How it works
-
-1. **Initial check**: the daemon checks which streamers in the priority list
-   are currently live (regardless of follow status).
-2. **Launch**: launches the highest-priority currently-live streamer via
-   `streamlink` + `mpv`, and (re)launches Chatterino pointed at that channel.
-3. **Monitoring**: every 10 seconds the daemon checks for control signals
-   (`.control`) and reloads `streamers.txt` if it changed; every 60 seconds
-   it re-polls the Twitch API for live status (rate-limited separately from
-   the 10s loop).
-4. **Grace period**: if a higher-priority stream goes online while you're
-   watching something lower-priority, the daemon waits 5 minutes before
-   auto-switching (unless overridden or switched manually).
-5. **Live title updates**: on each 60-second API poll, if the current
-   stream's game or title changed, the daemon pushes an updated title to
-   mpv's window over a per-stream JSON IPC socket — no restart needed.
-6. **Last-seen tracking**: every poll, the daemon records a timestamp for
-   every streamer currently live into `.last_seen.json`, so the UI can show
-   "last live: X ago" for offline streamers.
-7. **UI as a thin client**: while the daemon is running, `marquee_ui.py`
-   reads live-stream data and status straight from `.status.json` instead of
-   polling Twitch itself. If the daemon isn't running, the UI falls back to
-   polling the Twitch API directly on the same 60s cadence, so the list still
-   works standalone (last-seen data just won't update in that state, since
-   only the daemon writes `.last_seen.json`).
-8. **Auto-launch**: when the current stream ends, the daemon launches the
-   next highest-priority live stream.
-
 ## Configuration
 
 These live as constants near the top of `marquee_daemon.py`:
@@ -285,54 +241,6 @@ for one-shot streams).
   transient)
 - `.log` - daemon log file, written by `marquee.sh start` (auto-generated)
 
-## Troubleshooting
-
-### Script not starting streams
-
-Check the log: `marquee.sh log`
-
-Common issues:
-- `twitch` CLI not authenticated: run `twitch auth login`
-- Streamer not in priority list: edit `streamers.txt` (or press `e` in the
-  UI)
-- No live streams: check if your streamers are actually live
-
-### Chatterino window flashes / closes and reopens on every switch
-
-This is expected, not a bug. This system's installed Chatterino build has no
-way to activate a tab in an already-running window — asking it to open a
-channel just spawns a whole new process/window instead of switching the
-existing one. To avoid ending up with a pile of stale Chatterino windows, the
-daemon (and one-shot streams) kill any running Chatterino instance and
-relaunch it fresh on every stream switch. Chatterino restores its
-previously-open tabs on startup, so you still end up on the right channel's
-tab — you'll just see the window briefly disappear and reappear instead of a
-silent in-place switch. If a future Chatterino build supports real tab
-activation, this can be revisited.
-
-### Chatterino not opening at all
-
-Make sure Chatterino is installed and in your `PATH`:
-
-```bash
-which chatterino
-```
-
-### Notifications not showing
-
-Ensure `notify-send` is installed and your desktop environment supports it:
-
-```bash
-notify-send "test"
-```
-
-### UI fails to launch / `ModuleNotFoundError: textual`
-
-The Textual dependency lives in the project's venv, not system Python. Run
-the Setup step 3 above (`python3 -m venv .venv && .venv/bin/pip install -r
-requirements.txt`) if you haven't already, and make sure `marquee_ui.py`'s
-shebang / `marquee.sh` are resolving to that venv's interpreter.
-
 ## Tips
 
 - **Add an alias** to your `.zshrc` or `.bashrc`:
@@ -350,8 +258,14 @@ shebang / `marquee.sh` are resolving to that venv's interpreter.
   systemctl --user enable marquee
   systemctl --user start marquee
   ```
-  If you're migrating from the old `twitchtv.service` unit, disable that one
-  first: `systemctl --user disable twitchtv`.
+
+- **Window placement on a second monitor**: if you use Chatterino alongside
+  Marquee.tv, it's worth setting up window rules in your desktop environment
+  so mpv and Chatterino automatically land next to each other on your
+  second monitor every time a stream switches, instead of having to move
+  them by hand. On KDE Plasma, this is System Settings → Window Management
+  → Window Rules — add a rule matching each app's window class/title with a
+  fixed position and size.
 
 ## License
 
