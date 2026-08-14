@@ -17,7 +17,10 @@ from textual.widgets import Static
 
 from priority_list import parse_streamers_file, StreamerEntry
 from marquee_model import ListNavigator, AdHocFlow, AdHocFlowState, AdHocMode
-from marquee_render import HeaderData, RowData, render_header, render_row_collapsed, render_row_expanded_detail, header_border_label
+from marquee_render import (
+    HeaderData, RowData, render_header, render_row_collapsed, render_row_expanded_detail,
+    header_border_label, STATUS_DOT,
+)
 from mpv_ipc import set_title
 from ui_format import build_mpv_title
 
@@ -38,6 +41,8 @@ MARGIN = 2
 # Catppuccin Mocha accents (matches the user's terminal/desktop theme).
 BORDER_COLOR = "#74c7ec"  # Sapphire — outer box, NOW WATCHING/PRIORITY LIST boxes, labels, footer
 HIGHLIGHT_STYLE = "bold #1e1e2e on #b4befe"  # dark text on Lavender bar
+LIVE_DOT_STYLE = "#a6e3a1"  # Green — lit
+OFFLINE_DOT_STYLE = "#6c7086"  # Grey — unlit
 
 class QuitConfirmModal(ModalScreen[bool]):
     """Centered popup asking whether to quit and stop the daemon."""
@@ -379,6 +384,8 @@ class MarqueeApp(App):
 
         label = f" {header_border_label(self.ad_hoc_mode)} "
         lines.append(Text("║ ┌" + label + "─" * (header_box_width - cell_len(label)) + "┐ ║", style=B))
+        header_has_dot = False
+        header_is_live = False
         if self.ad_hoc.state == AdHocFlowState.TYPING:
             header_lines = [
                 set_cell_size(f"Watch streamer: {self.ad_hoc.buffer}", header_inner),
@@ -394,9 +401,18 @@ class MarqueeApp(App):
         else:
             header_lines = self._transition_header_lines(header_inner)
             if header_lines is None:
-                header_lines = render_header(self._header_data(), header_inner)
-        for text in header_lines:
-            lines.append(self._styled_line(("║ │ ", B), (text, None), (" │ ║", B)))
+                header_data = self._header_data()
+                header_lines = render_header(header_data, header_inner)
+                header_has_dot = header_data.active
+                header_is_live = header_data.is_live
+        for idx, text in enumerate(header_lines):
+            if idx == 0 and header_has_dot:
+                dot_style = LIVE_DOT_STYLE if header_is_live else OFFLINE_DOT_STYLE
+                lines.append(self._styled_line(
+                    ("║ │ ", B), (text[:1], dot_style), (text[1:], None), (" │ ║", B),
+                ))
+            else:
+                lines.append(self._styled_line(("║ │ ", B), (text, None), (" │ ║", B)))
         lines.append(Text("║ └" + "─" * header_box_width + "┘ ║", style=B))
         lines.append(Text("║" + " " * inner_width + "║", style=B))
 
@@ -407,25 +423,28 @@ class MarqueeApp(App):
             style=B,
         ))
         rows = self._row_data()
-        last_index = len(rows) - 1
         for i, row in enumerate(rows):
             if i == self.nav.index:
-                if i > 0:
-                    lines.append(Text("║" + " " * inner_width + "║", style=B))
+                lines.append(Text("║" + " " * inner_width + "║", style=B))
                 collapsed = render_row_collapsed(row, inner_width - 3, highlighted=True)
+                highlight_dot_style = f"bold {LIVE_DOT_STYLE if row.is_live else OFFLINE_DOT_STYLE} on #b4befe"
                 lines.append(self._styled_line(
-                    ("║", B), ("▶ " + collapsed + " ", HIGHLIGHT_STYLE), ("║", B),
+                    ("║", B), ("▶ ", HIGHLIGHT_STYLE),
+                    (collapsed[:1], highlight_dot_style), (collapsed[1:] + " ", HIGHLIGHT_STYLE),
+                    ("║", B),
                 ))
                 detail = render_row_expanded_detail(row, inner_width - 4)
                 lines.append(self._styled_line(
                     ("║", B), ("  " + detail + "  ", HIGHLIGHT_STYLE), ("║", B),
                 ))
-                if i < last_index:
-                    lines.append(Text("║" + " " * inner_width + "║", style=B))
+                lines.append(Text("║" + " " * inner_width + "║", style=B))
             else:
                 collapsed = render_row_collapsed(row, list_inner)
+                dot_style = LIVE_DOT_STYLE if row.is_live else OFFLINE_DOT_STYLE
                 lines.append(self._styled_line(
-                    ("║" + " " * MARGIN + "│ ", B), (collapsed, None), (" │" + " " * MARGIN + "║", B),
+                    ("║" + " " * MARGIN + "│ ", B),
+                    (collapsed[:1], dot_style), (collapsed[1:], None),
+                    (" │" + " " * MARGIN + "║", B),
                 ))
         lines.append(Text("║" + " " * MARGIN + "└" + "─" * list_box_width + "┘" + " " * MARGIN + "║", style=B))
         lines.append(Text("║" + " " * inner_width + "║", style=B))

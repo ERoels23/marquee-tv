@@ -68,29 +68,15 @@ async def test_blank_line_spacing_around_highlighted_row(tmp_path, monkeypatch):
     async with app.run_test(size=(100, 40)) as pilot:
         await pilot.pause()
 
-        # First entry highlighted: no blank line above (box border instead), one below.
-        app.nav.index = 0
-        app.render_frame()
-        lines = app.query_one("#frame").content.split("\n")
-        marker_idx = next(i for i, l in enumerate(lines) if l.plain.startswith("║▶"))
-        assert not is_blank_breakout(lines[marker_idx - 1])
-        assert is_blank_breakout(lines[marker_idx + 2])  # past collapsed + detail lines
-
-        # Middle entry highlighted: blank line both above and below.
-        app.nav.index = 1
-        app.render_frame()
-        lines = app.query_one("#frame").content.split("\n")
-        marker_idx = next(i for i, l in enumerate(lines) if l.plain.startswith("║▶"))
-        assert is_blank_breakout(lines[marker_idx - 1])
-        assert is_blank_breakout(lines[marker_idx + 2])
-
-        # Last entry highlighted: blank line above, none below (box border instead).
-        app.nav.index = 2
-        app.render_frame()
-        lines = app.query_one("#frame").content.split("\n")
-        marker_idx = next(i for i, l in enumerate(lines) if l.plain.startswith("║▶"))
-        assert is_blank_breakout(lines[marker_idx - 1])
-        assert not is_blank_breakout(lines[marker_idx + 2])
+        # Blank line above and below the highlighted row, regardless of its
+        # position in the list — including at the very top or bottom.
+        for index in (0, 1, 2):
+            app.nav.index = index
+            app.render_frame()
+            lines = app.query_one("#frame").content.split("\n")
+            marker_idx = next(i for i, l in enumerate(lines) if l.plain.startswith("║▶"))
+            assert is_blank_breakout(lines[marker_idx - 1])
+            assert is_blank_breakout(lines[marker_idx + 2])  # past collapsed + detail lines
 
 
 @pytest.mark.asyncio

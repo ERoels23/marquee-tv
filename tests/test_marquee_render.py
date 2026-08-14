@@ -2,7 +2,7 @@ from rich.cells import cell_len
 
 from marquee_render import (
     HeaderData, RowData, render_header, render_row_collapsed,
-    render_row_expanded_detail, header_border_label,
+    render_row_expanded_detail, header_border_label, STATUS_DOT,
 )
 
 
@@ -23,7 +23,7 @@ def test_render_header_live_alignment():
     lines = render_header(header, 40)
     assert len(lines) == 3
     assert all(cell_len(l) == 40 for l in lines)
-    assert lines[0].startswith("\U0001F7E2 Jerma")
+    assert lines[0].startswith(f"{STATUS_DOT} Jerma")
     assert "12k viewers" in lines[0]
     assert lines[1].startswith("Just Chatting")
     assert "live" in lines[1]
@@ -51,7 +51,7 @@ def test_render_row_collapsed_live():
     )
     line = render_row_collapsed(row, 60)
     assert cell_len(line) == 60
-    assert line.startswith("\U0001F7E2 Jerma")
+    assert line.startswith(f"{STATUS_DOT} Jerma")
     assert "12k" in line
     assert "Just Chatting" in line
     assert "live" in line  # uptime now shown on the collapsed line, not just detail
@@ -61,8 +61,26 @@ def test_render_row_collapsed_offline_no_viewers_or_game():
     row = RowData(name="Northernlion", is_live=False)
     line = render_row_collapsed(row, 50)
     assert cell_len(line) == 50
-    assert line.startswith("⚪ Northernlion")
+    assert line.startswith(f"{STATUS_DOT} Northernlion")
     assert "None" not in line
+
+
+def test_render_row_collapsed_uptime_columns_align_across_rows(monkeypatch):
+    # Different digit counts (e.g. "5h01m" vs "12h34m") used to shift where
+    # the uptime text started, since the whole "uptime viewers" blob was just
+    # right-justified as one unit. Fixed-width columns keep it aligned.
+    monkeypatch.setattr("marquee_render.format_uptime", lambda started_at: {
+        "a": "5h01m", "b": "12h34m",
+    }[started_at])
+    row_a = RowData(name="A", is_live=True, viewers=5, game="g", started_at="a")
+    row_b = RowData(name="B", is_live=True, viewers=12345, game="g", started_at="b")
+
+    line_a = render_row_collapsed(row_a, 60, highlighted=False)
+    line_b = render_row_collapsed(row_b, 60, highlighted=False)
+
+    assert "live 5h01m" in line_a
+    assert "live 12h34m" in line_b
+    assert line_a.index("live") == line_b.index("live")
 
 
 def test_render_row_collapsed_category_not_truncated():
@@ -70,6 +88,12 @@ def test_render_row_collapsed_category_not_truncated():
     row = RowData(name="X", is_live=True, viewers=1, game=long_game, started_at=None)
     line = render_row_collapsed(row, 120)
     assert long_game in line
+
+
+def test_render_row_collapsed_category_shifted_right():
+    row = RowData(name="X", is_live=True, viewers=1, game="Category", started_at=None)
+    line = render_row_collapsed(row, 60)
+    assert "    Category" in line  # 4-space gap (shifted 2 cells right of the old 2-space gap)
 
 
 def test_render_row_collapsed_highlighted_shows_username_in_parens():
@@ -97,7 +121,8 @@ def test_render_row_expanded_detail_live():
     )
     detail = render_row_expanded_detail(row, 60)
     assert cell_len(detail) == 60
-    assert '"doing bit stuff"' in detail
+    assert "doing bit stuff" in detail
+    assert '"' not in detail  # quotes removed — unnecessary width
     # uptime moved up to the collapsed line — no longer duplicated here, and
     # this is also what used to get truncated away by a very long title.
     assert "live" not in detail
@@ -129,5 +154,5 @@ def test_render_header_narrow_width_emoji_alignment():
     lines = render_header(header, 25)
     assert len(lines) == 3
     assert all(cell_len(l) == 25 for l in lines)
-    # Line 1 should have emoji at the very start, right before the (truncated) name
-    assert lines[0].startswith("\U0001F7E2 ")
+    # Line 1 should have the status dot at the very start, right before the (truncated) name
+    assert lines[0].startswith(f"{STATUS_DOT} ")

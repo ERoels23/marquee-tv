@@ -39,8 +39,13 @@ class RowData:
     username: str = ""
 
 
+STATUS_DOT = "●"  # 1 cell wide, colorable
+
+
 def _dot(is_live: bool) -> str:
-    return "\U0001F7E2" if is_live else "⚪"  # green (on) / grey (off) circle
+    # Same glyph either way — live vs. offline is conveyed by color, applied
+    # by the caller (this module only produces plain, unstyled text).
+    return STATUS_DOT
 
 
 def _justify(left: str, right: str, width: int) -> str:
@@ -79,6 +84,10 @@ def render_header(header: HeaderData, width: int) -> List[str]:
     return [line1, line2, line3]
 
 
+UPTIME_COL = 11  # fits "live 99h59m"
+VIEWERS_COL = 6  # fits e.g. "999.9k"
+
+
 def render_row_collapsed(row: RowData, width: int, highlighted: bool = False) -> str:
     name = row.name
     if highlighted and row.username and row.username != row.name:
@@ -89,12 +98,16 @@ def render_row_collapsed(row: RowData, width: int, highlighted: bool = False) ->
     # _justify's own overflow guard is the only thing that would ever cut it.
     left = f"{_dot(row.is_live)} {name}"
     if row.is_live and row.game:
-        left += f"  {row.game}"
+        left += f"    {row.game}"
 
     if row.is_live:
         uptime_text = f"live {format_uptime(row.started_at)}" if row.started_at else ""
         viewers_text = format_viewers(row.viewers) if row.viewers is not None else ""
-        right = f"{uptime_text} {viewers_text}".strip()
+        # Fixed-width columns so uptime/viewers line up across rows regardless
+        # of digit count. Uptime is left-justified within its column so "live"
+        # itself starts at a consistent position (right-justifying the whole
+        # string would shift "live" left/right depending on the hour count).
+        right = f"{uptime_text.ljust(UPTIME_COL)} {viewers_text:>{VIEWERS_COL}}"
     else:
         right = ""
     return _justify(left, right, width)
@@ -102,7 +115,7 @@ def render_row_collapsed(row: RowData, width: int, highlighted: bool = False) ->
 
 def render_row_expanded_detail(row: RowData, width: int) -> str:
     if row.is_live:
-        detail = f'"{row.title}"'
+        detail = row.title
     else:
         detail = f"last live: {format_last_seen(row.last_seen)}"
     return set_cell_size(truncate_text("  " + detail, width), width)
