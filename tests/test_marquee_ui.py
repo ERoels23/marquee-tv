@@ -25,6 +25,29 @@ async def test_app_boots_and_shows_idle_header(tmp_path, monkeypatch):
         assert "Test" in frame.content  # nickname from streamers.txt shows in the list
 
 
+@pytest.mark.asyncio
+async def test_frame_width_tracks_terminal_and_updates_on_resize(tmp_path, monkeypatch):
+    from rich.cells import cell_len
+
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("teststreamer\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+
+    app = MarqueeApp()
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        first_line = app.query_one("#frame").content.split("\n")[0].plain
+        assert cell_len(first_line) == 120
+
+        await pilot.resize_terminal(160, 40)
+        await pilot.pause()
+        first_line = app.query_one("#frame").content.split("\n")[0].plain
+        assert cell_len(first_line) == 160
+
+
 def test_refresh_data_does_not_clobber_fresh_api_data_with_stale_status_file(tmp_path, monkeypatch):
     status_file = tmp_path / ".status.json"
     status_file.write_text(json.dumps({

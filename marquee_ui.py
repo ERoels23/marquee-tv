@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from rich.text import Text
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Static
@@ -26,7 +27,7 @@ TWITCH_USER_ID = "60132775"
 API_UPDATE_INTERVAL = 60
 REFRESH_INTERVAL = 1.0
 
-OUTER_WIDTH = 70
+MIN_OUTER_WIDTH = 60  # floor below which the box layout starts breaking down
 MARGIN = 2
 
 # Catppuccin Mocha accents (matches the user's terminal/desktop theme).
@@ -68,15 +69,22 @@ class MarqueeApp(App):
         self.info_visible = False
         self.channel_bio: Optional[str] = None
         self.quit_confirm = QuitConfirm()
+        self._terminal_width = MIN_OUTER_WIDTH
 
     def compose(self) -> ComposeResult:
         yield Static(id="frame", markup=False)
 
     def on_mount(self) -> None:
         self.load_entries()
+        self._terminal_width = self.size.width
         self.refresh_data(force=True)
         self.render_frame()
         self.set_interval(REFRESH_INTERVAL, self.tick)
+
+    def on_resize(self, event: events.Resize) -> None:
+        # self.size lags a cycle behind inside this handler; event.size is current.
+        self._terminal_width = event.size.width
+        self.render_frame()
 
     def load_entries(self) -> None:
         self.entries = parse_streamers_file(STREAMERS_FILE)
@@ -232,9 +240,10 @@ class MarqueeApp(App):
             return
 
         # Widths below are hand-tuned (not the plan's original formulas, which had
-        # off-by-one/two errors) to keep every rendered line at exactly OUTER_WIDTH
+        # off-by-one/two errors) to keep every rendered line at exactly outer_width
         # cells — verify with rich.cells.cell_len if you touch these.
-        inner_width = OUTER_WIDTH - 2
+        outer_width = max(MIN_OUTER_WIDTH, self._terminal_width)
+        inner_width = outer_width - 2
         header_box_width = inner_width - 4
         header_inner = header_box_width - 2
         list_box_width = inner_width - 2 * MARGIN - 2
@@ -243,7 +252,7 @@ class MarqueeApp(App):
         B = BORDER_COLOR
         lines: List[Text] = []
         lines.append(Text(
-            "╔═ Marquee.tv " + "═" * (OUTER_WIDTH - cell_len("╔═ Marquee.tv ") - 1) + "╗",
+            "╔═ Marquee.tv " + "═" * (outer_width - cell_len("╔═ Marquee.tv ") - 1) + "╗",
             style=B,
         ))
 
