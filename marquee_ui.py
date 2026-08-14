@@ -299,12 +299,10 @@ class MarqueeApp(App):
         self.render_frame()
 
     def action_edit_list(self) -> None:
-        import os
         import subprocess as sp
-        editor = os.environ.get("EDITOR", "nvim")
         with self.suspend():
             try:
-                sp.run([editor, str(STREAMERS_FILE)])
+                sp.run(["nvim", str(STREAMERS_FILE)])
             except OSError:
                 pass
         self.load_entries()
