@@ -111,9 +111,11 @@ The TUI is a single bordered "Marquee.tv" window containing:
 - **NOW WATCHING** box — streamer name, live/offline indicator, viewer
   count, category, uptime, and stream title for whatever's currently
   playing. Shows "No stream active" when idle. The box's border label reads
-  `NOW WATCHING (ad-hoc · override|temporary|oneshot)` while watching an
-  ad-hoc stream, so you can always tell at a glance whether you're on your
-  normal priority-list rotation or something else.
+  `NOW WATCHING (ad-hoc · override|temporary)` while an Override or
+  Temporary ad-hoc stream is playing in this box, so you can always tell at
+  a glance whether you're on your normal priority-list rotation or
+  something else. (One-Shot streams play in a completely separate mpv
+  window, so this box and its label are unaffected — see below.)
 - **PRIORITY LIST** box — every streamer from `streamers.txt`, in order,
   with live/offline status, category, and viewer count. The highlighted row
   expands to show the full title + uptime (if live) or `last live: <relative
@@ -154,8 +156,11 @@ Twitch username (it does not need to be in your priority list) and press
   still happen.
 - **`1` — One-Shot**: opens a completely separate mpv window for this
   streamer, entirely untracked by the daemon. Your normal priority-list
-  stream (and Chatterino) keeps running untouched in the background. Closing
-  the one-shot mpv window just ends that one-shot session.
+  stream (and Chatterino) keeps running untouched in the background, and the
+  NOW WATCHING box keeps showing that normal stream unchanged — it does
+  *not* relabel itself as ad-hoc, since the one-shot stream lives in its
+  own window (identified by its own mpv title bar). Closing the one-shot
+  mpv window just ends that one-shot session.
 
 Override and Temporary both go through the daemon's normal `.control`
 protocol; One-Shot is handled entirely inside the UI process.

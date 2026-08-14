@@ -228,7 +228,21 @@ class MarqueeApp(App):
 
         label = f" {header_border_label(self.ad_hoc_mode)} "
         lines.append("║ ┌" + label + "─" * (header_box_width - cell_len(label)) + "┐ ║")
-        for text in render_header(self._header_data(), header_inner):
+        if self.ad_hoc.state == AdHocFlowState.TYPING:
+            header_lines = [
+                set_cell_size(f"Watch streamer: {self.ad_hoc.buffer}", header_inner),
+                " " * header_inner,
+                " " * header_inner,
+            ]
+        elif self.ad_hoc.state == AdHocFlowState.MODE_SELECT:
+            header_lines = [
+                set_cell_size(f'Watch "{self.ad_hoc.pending_name}" as:', header_inner),
+                set_cell_size("[O] Override   [T] Temporary   [1] One-Shot", header_inner),
+                " " * header_inner,
+            ]
+        else:
+            header_lines = render_header(self._header_data(), header_inner)
+        for text in header_lines:
             lines.append("║ │ " + text + " │ ║")
         lines.append("║ └" + "─" * header_box_width + "┘ ║")
         lines.append("║" + " " * inner_width + "║")
@@ -436,7 +450,6 @@ class MarqueeApp(App):
                 break
             time.sleep(0.1)
         subprocess.Popen(["chatterino", "-a", streamer], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        self.ad_hoc_mode = "oneshot"
         self.render_frame()
         timer = self.set_interval(API_UPDATE_INTERVAL, lambda: self._poll_one_shot_title(streamer), pause=False)
         if streamer in self.one_shots:

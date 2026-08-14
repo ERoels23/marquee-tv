@@ -439,3 +439,74 @@ async def test_start_service_noop_when_already_running(tmp_path, monkeypatch):
         await pilot.pause()
         await pilot.press("s")
         assert start_calls["count"] == 0  # already running, should not call start_service again
+
+
+@pytest.mark.asyncio
+async def test_typing_state_renders_in_header_box(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("slash")
+        for ch in "gronk":
+            await pilot.press(ch)
+        frame = app.query_one("#frame")
+        assert "Watch streamer: gronk" in frame.content
+
+
+@pytest.mark.asyncio
+async def test_mode_select_state_renders_prompt_in_header_box(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("slash")
+        for ch in "gronk":
+            await pilot.press(ch)
+        await pilot.press("enter")
+        frame = app.query_one("#frame")
+        assert "gronk" in frame.content
+        assert "Override" in frame.content
+        assert "One-Shot" in frame.content
+
+
+@pytest.mark.asyncio
+async def test_oneshot_does_not_relabel_now_watching_box(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr("marquee_ui.SCRIPT_DIR", tmp_path)
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+
+    fake_process = mock.Mock()
+    fake_process.poll.return_value = None
+    monkeypatch.setattr("marquee_ui.subprocess.Popen", lambda *a, **kw: fake_process)
+    monkeypatch.setattr("marquee_ui.subprocess.run", lambda *a, **kw: mock.Mock(returncode=1))
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("slash")
+        for ch in "gronk":
+            await pilot.press(ch)
+        await pilot.press("enter")
+        await pilot.press("1")  # One-Shot
+        assert app.ad_hoc_mode is None  # must NOT be set to "oneshot"
+        frame = app.query_one("#frame")
+        # The footer always shows a "(/)Ad-hoc" keybinding hint, so check the
+        # NOW WATCHING border label specifically rather than the whole frame.
+        assert "(ad-hoc" not in frame.content.lower()
