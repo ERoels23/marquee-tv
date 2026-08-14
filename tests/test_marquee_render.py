@@ -23,8 +23,7 @@ def test_render_header_live_alignment():
     lines = render_header(header, 40)
     assert len(lines) == 3
     assert all(cell_len(l) == 40 for l in lines)
-    assert lines[0].startswith("Jerma")
-    assert lines[0].rstrip().endswith("\U0001F7E2")
+    assert lines[0].startswith("\U0001F7E2 Jerma")
     assert "12k viewers" in lines[0]
     assert lines[1].startswith("Just Chatting")
     assert "live" in lines[1]
@@ -49,8 +48,7 @@ def test_render_row_collapsed_live():
     row = RowData(name="Jerma", is_live=True, viewers=12400, game="Just Chatting")
     line = render_row_collapsed(row, 50)
     assert cell_len(line) == 50
-    assert line.startswith("Jerma")
-    assert line.rstrip().endswith("\U0001F7E2")
+    assert line.startswith("\U0001F7E2 Jerma")
     assert "12k" in line
     assert "Just Chatting" in line
 
@@ -59,8 +57,7 @@ def test_render_row_collapsed_offline_no_viewers_or_game():
     row = RowData(name="Northernlion", is_live=False)
     line = render_row_collapsed(row, 50)
     assert cell_len(line) == 50
-    assert line.startswith("Northernlion")
-    assert line.rstrip().endswith("\U0001F534")
+    assert line.startswith("\U0001F534 Northernlion")
     assert "None" not in line
 
 
@@ -101,5 +98,5 @@ def test_render_header_narrow_width_emoji_alignment():
     lines = render_header(header, 25)
     assert len(lines) == 3
     assert all(cell_len(l) == 25 for l in lines)
-    # Line 1 should have emoji at end after aggressive left truncation
-    assert lines[0].rstrip().endswith("\U0001F7E2")
+    # Line 1 should have emoji at the very start, right before the (truncated) name
+    assert lines[0].startswith("\U0001F7E2 ")

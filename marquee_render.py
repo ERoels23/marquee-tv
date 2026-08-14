@@ -68,8 +68,8 @@ def render_header(header: HeaderData, width: int) -> List[str]:
         ]
 
     viewers_text = f"{format_viewers(header.viewers)} viewers" if header.viewers is not None else ""
-    right1 = f"{viewers_text} {_dot(header.is_live)}".strip()
-    line1 = _justify(header.name, right1, width)
+    left1 = f"{_dot(header.is_live)} {header.name}"
+    line1 = _justify(left1, viewers_text, width)
 
     uptime = f"live {format_uptime(header.started_at)}" if header.started_at else ""
     line2 = _justify(header.game, uptime, width)
@@ -82,9 +82,8 @@ def render_row_collapsed(row: RowData, width: int) -> str:
     name = set_cell_size(truncate_text(row.name, NAME_COL), NAME_COL)
     game = set_cell_size(truncate_text(row.game, GAME_COL), GAME_COL) if row.is_live else " " * GAME_COL
     viewers_text = format_viewers(row.viewers) if row.is_live and row.viewers is not None else ""
-    right = f"{viewers_text} {_dot(row.is_live)}".strip() if viewers_text else _dot(row.is_live)
-    left = f"{name}{game}"
-    return _justify(left, right, width)
+    left = f"{_dot(row.is_live)} {name}{game}"
+    return _justify(left, viewers_text, width)
 
 
 def render_row_expanded_detail(row: RowData, width: int) -> str:
