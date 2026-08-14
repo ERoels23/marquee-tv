@@ -121,11 +121,16 @@ class TwitchTVController:
                     cmd += ["-q", f"user_login={streamer}"]
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
 
-                if result.returncode != 0:
+                # Judge success by whether stdout actually parses, not the
+                # exit code: the twitch CLI can crash in its own unrelated
+                # update-check code *after* already printing valid JSON,
+                # which would otherwise discard perfectly good data.
+                try:
+                    data = json.loads(result.stdout)
+                except json.JSONDecodeError:
                     print(f"Error querying Twitch API: {result.stderr}")
                     continue
 
-                data = json.loads(result.stdout)
                 for stream in data.get('data', []):
                     streamer_name = stream['user_login'].lower()
                     live_streams[streamer_name] = {
@@ -181,9 +186,12 @@ class TwitchTVController:
                 for streamer in batch:
                     cmd += ["-q", f"login={streamer}"]
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-                if result.returncode != 0:
+                # Judge success by whether stdout parses, not the exit code —
+                # see get_live_streams for why.
+                try:
+                    data = json.loads(result.stdout)
+                except json.JSONDecodeError:
                     continue
-                data = json.loads(result.stdout)
                 for user in data.get('data', []):
                     user_ids[user['login'].lower()] = user['id']
         except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError) as e:
@@ -200,6 +208,9 @@ class TwitchTVController:
             game = existing.get('game')
             title = existing.get('title')
 
+            # Judge success by whether stdout parses, not the exit code — see
+            # get_live_streams for why (the twitch CLI can crash in its own
+            # unrelated update-check code after already printing good JSON).
             if not at:
                 try:
                     result = subprocess.run(
@@ -207,11 +218,10 @@ class TwitchTVController:
                          "-q", f"user_id={user_id}", "-q", "type=archive", "-q", "first=1"],
                         capture_output=True, text=True, timeout=10,
                     )
-                    if result.returncode == 0:
-                        videos = json.loads(result.stdout).get('data', [])
-                        if videos:
-                            at = videos[0]['created_at']
-                            title = title or videos[0].get('title')
+                    videos = json.loads(result.stdout).get('data', [])
+                    if videos:
+                        at = videos[0]['created_at']
+                        title = title or videos[0].get('title')
                 except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError):
                     pass
 
@@ -221,11 +231,10 @@ class TwitchTVController:
                         ["/usr/bin/twitch", "api", "get", "channels", "-q", f"broadcaster_id={user_id}"],
                         capture_output=True, text=True, timeout=10,
                     )
-                    if result.returncode == 0:
-                        channels = json.loads(result.stdout).get('data', [])
-                        if channels:
-                            game = game or (channels[0].get('game_name') or None)
-                            title = title or (channels[0].get('title') or None)
+                    channels = json.loads(result.stdout).get('data', [])
+                    if channels:
+                        game = game or (channels[0].get('game_name') or None)
+                        title = title or (channels[0].get('title') or None)
                 except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError):
                     pass
 

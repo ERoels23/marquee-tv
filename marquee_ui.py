@@ -244,9 +244,13 @@ class MarqueeApp(App):
                 for name in batch:
                     cmd += ["-q", f"user_login={name}"]
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-                if result.returncode != 0:
+                # Judge success by whether stdout parses, not the exit code:
+                # the twitch CLI can crash in its own unrelated update-check
+                # code after already printing valid JSON.
+                try:
+                    data = json.loads(result.stdout)
+                except json.JSONDecodeError:
                     continue
-                data = json.loads(result.stdout)
                 for stream in data.get('data', []):
                     name = stream['user_login'].lower()
                     live[name] = {
@@ -266,8 +270,9 @@ class MarqueeApp(App):
                 ["/usr/bin/twitch", "api", "get", "streams", "-q", f"user_login={streamer}"],
                 capture_output=True, text=True, timeout=10,
             )
-            if result.returncode != 0:
-                return None
+            # Judge success by whether stdout parses, not the exit code: the
+            # twitch CLI can crash in its own unrelated update-check code
+            # after already printing valid JSON.
             data = json.loads(result.stdout)
             streams = data.get('data', [])
             if not streams:
@@ -562,8 +567,9 @@ class MarqueeApp(App):
                 ["/usr/bin/twitch", "api", "get", "users", "-q", f"login={streamer}"],
                 capture_output=True, text=True, timeout=10,
             )
-            if result.returncode != 0:
-                return "(unable to fetch channel bio)"
+            # Judge success by whether stdout parses, not the exit code: the
+            # twitch CLI can crash in its own unrelated update-check code
+            # after already printing valid JSON.
             data = json.loads(result.stdout)
             users = data.get('data', [])
             if not users:

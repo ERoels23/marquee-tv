@@ -29,6 +29,27 @@ def test_get_live_streams_queries_by_user_login_not_followed(monkeypatch):
     assert live == {"alpha": {"title": "t1", "game": "g1", "viewers": 5, "started_at": "2026-01-01T00:00:00Z"}}
 
 
+def test_get_live_streams_uses_data_despite_nonzero_exit_code(monkeypatch):
+    # Regression: the installed twitch CLI can crash in its own unrelated
+    # update-check code *after* already printing valid JSON to stdout,
+    # exiting non-zero despite having done its job correctly. Judging
+    # success by the exit code alone silently discarded real live-stream
+    # data whenever this happened. Success should be judged by whether
+    # stdout actually parses.
+    def fake_run(cmd, **kwargs):
+        return mock.Mock(returncode=2, stdout=json.dumps({"data": [
+            {"user_login": "alpha", "title": "t1", "game_name": "g1", "viewer_count": 5, "started_at": "2026-01-01T00:00:00Z"},
+        ]}), stderr="panic: runtime error: index out of range [0] with length 0")
+
+    monkeypatch.setattr("marquee_daemon.subprocess.run", fake_run)
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    ctrl.priority_list = ["alpha"]
+
+    live = ctrl.get_live_streams()
+
+    assert live == {"alpha": {"title": "t1", "game": "g1", "viewers": 5, "started_at": "2026-01-01T00:00:00Z"}}
+
+
 def test_get_live_streams_empty_priority_list_skips_api_call(monkeypatch):
     def fake_run(*a, **kw):
         raise AssertionError("should not query the API with an empty priority list")

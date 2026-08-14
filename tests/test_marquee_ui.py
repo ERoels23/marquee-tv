@@ -519,6 +519,26 @@ def test_poll_live_streams_from_api_queries_by_user_login_not_followed(monkeypat
     }
 
 
+def test_poll_live_streams_from_api_uses_data_despite_nonzero_exit_code(monkeypatch):
+    # Regression: the installed twitch CLI can crash in its own unrelated
+    # update-check code *after* already printing valid JSON to stdout,
+    # exiting non-zero despite having done its job correctly. Success should
+    # be judged by whether stdout actually parses, not the exit code.
+    def fake_run(cmd, **kwargs):
+        return mock.Mock(returncode=2, stdout=json.dumps({"data": [
+            {"user_login": "alpha", "title": "t1", "game_name": "g1", "viewer_count": 5, "started_at": None},
+        ]}), stderr="panic: runtime error: index out of range [0] with length 0")
+
+    monkeypatch.setattr("marquee_ui.subprocess.run", fake_run)
+    app = MarqueeApp.__new__(MarqueeApp)
+    from priority_list import StreamerEntry
+    app.entries = [StreamerEntry(username="alpha")]
+
+    live = app.poll_live_streams_from_api()
+
+    assert live == {"alpha": {"title": "t1", "game": "g1", "viewers": 5, "started_at": None}}
+
+
 def test_poll_single_stream_from_api_queries_by_user_login(monkeypatch):
     captured = {}
 
