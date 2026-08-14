@@ -7,7 +7,7 @@ import pytest
 
 from textual.widgets import Static
 
-from marquee_ui import MarqueeApp, InfoModal, QuitConfirmModal
+from marquee_ui import MarqueeApp, InfoModal, QuitConfirmModal, PENDING_MANUAL_SWITCH_TIMEOUT
 from marquee_model import AdHocFlowState
 
 
@@ -56,7 +56,7 @@ def test_manual_switch_sets_manual_transition(tmp_path, monkeypatch):
     monkeypatch.setattr("marquee_ui.STATUS_FILE", status_file)
     app = MarqueeApp()
     app.current_stream = "alpha"
-    app._pending_manual_switch = "beta"
+    app._pending_manual_switch = ("beta", time.monotonic())
     status_file.write_text(json.dumps({"current_stream": "beta", "stream_alive": True, "live_streams": {}}))
 
     app._load_status_file()
@@ -77,6 +77,26 @@ def test_auto_switch_sets_auto_transition(tmp_path, monkeypatch):
 
     assert app.transition is not None
     assert app.transition["kind"] == "auto"
+
+
+def test_stale_pending_manual_switch_does_not_mislabel_a_later_unrelated_switch(tmp_path, monkeypatch):
+    # A manual switch can be requested without current_stream ever changing (e.g.
+    # relaunching the already-current stream, or targeting an entry that went
+    # offline before the daemon acted on it) — _pending_manual_switch would then
+    # sit there unconsumed. If an unrelated auto-switch later lands on that same
+    # streamer name, it must not be mislabeled "manual" just because the stale
+    # flag happens to match.
+    status_file = tmp_path / ".status.json"
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", status_file)
+    app = MarqueeApp()
+    app.current_stream = "alpha"
+    app._pending_manual_switch = ("beta", time.monotonic() - PENDING_MANUAL_SWITCH_TIMEOUT - 1)
+    status_file.write_text(json.dumps({"current_stream": "beta", "stream_alive": True, "live_streams": {}}))
+
+    app._load_status_file()
+
+    assert app.transition["kind"] == "auto"
+    assert app._pending_manual_switch is None
 
 
 def test_no_transition_on_initial_boot(tmp_path, monkeypatch):

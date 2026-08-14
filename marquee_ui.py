@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from rich.cells import cell_len, set_cell_size
 from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
@@ -29,6 +30,7 @@ TWITCH_USER_ID = "60132775"
 API_UPDATE_INTERVAL = 60
 REFRESH_INTERVAL = 1.0
 TRANSITION_DURATION = 5.0
+PENDING_MANUAL_SWITCH_TIMEOUT = 30.0  # bounds how long a stale pending-switch can mislabel a later transition
 
 MIN_OUTER_WIDTH = 60  # floor below which the box layout starts breaking down
 MARGIN = 2
@@ -134,7 +136,7 @@ class MarqueeApp(App):
         self.nav = ListNavigator(0)
         self.ad_hoc = AdHocFlow()
         self.one_shots: Dict[str, dict] = {}
-        self._pending_manual_switch: Optional[str] = None
+        self._pending_manual_switch: Optional[tuple] = None  # (streamer, monotonic_time)
         self.transition: Optional[Dict] = None  # {"kind": "auto"|"manual", "started": monotonic}
         self._terminal_width = MIN_OUTER_WIDTH
 
@@ -238,7 +240,12 @@ class MarqueeApp(App):
             return
         if (previous_stream is not None and self.current_stream is not None
                 and self.current_stream != previous_stream):
-            kind = "manual" if self._pending_manual_switch == self.current_stream else "auto"
+            kind = "auto"
+            if self._pending_manual_switch is not None:
+                pending_streamer, pending_time = self._pending_manual_switch
+                if (pending_streamer == self.current_stream
+                        and time.monotonic() - pending_time < PENDING_MANUAL_SWITCH_TIMEOUT):
+                    kind = "manual"
             self._pending_manual_switch = None
             self.transition = {"kind": kind, "started": time.monotonic()}
 
@@ -258,8 +265,6 @@ class MarqueeApp(App):
     def _transition_header_lines(self, width: int) -> Optional[List[str]]:
         """Returns the 3 NOW WATCHING lines for an in-progress switch transition,
         or None if no transition is active (caller falls back to render_header)."""
-        from rich.cells import set_cell_size
-
         if self.transition is None:
             return None
         elapsed = time.monotonic() - self.transition["started"]
@@ -317,8 +322,6 @@ class MarqueeApp(App):
         return line
 
     def render_frame(self) -> None:
-        from rich.cells import cell_len, set_cell_size
-
         # Widths below are hand-tuned (not the plan's original formulas, which had
         # off-by-one/two errors) to keep every rendered line at exactly outer_width
         # cells — verify with rich.cells.cell_len if you touch these.
@@ -404,7 +407,7 @@ class MarqueeApp(App):
         with open(CONTROL_FILE, 'w') as f:
             f.write(f"switch:{streamer}")
         self.ad_hoc_mode = None
-        self._pending_manual_switch = streamer
+        self._pending_manual_switch = (streamer, time.monotonic())
         self.render_frame()
 
     def action_ad_hoc_start(self) -> None:
@@ -530,7 +533,7 @@ class MarqueeApp(App):
         with open(CONTROL_FILE, 'w') as f:
             f.write(f"switch:{streamer}:{mode.value}")
         self.ad_hoc_mode = mode.value
-        self._pending_manual_switch = streamer
+        self._pending_manual_switch = (streamer, time.monotonic())
         self.render_frame()
 
     def spawn_one_shot(self, streamer: str) -> None:
