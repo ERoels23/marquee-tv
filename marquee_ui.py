@@ -197,6 +197,7 @@ class MarqueeApp(App):
         self.one_shots: Dict[str, dict] = {}
         self._pending_manual_switch: Optional[tuple] = None  # (streamer, monotonic_time)
         self.transition: Optional[Dict] = None  # {"kind": "auto"|"manual", "started": monotonic}
+        self.last_footer_key: Optional[str] = None
         self._terminal_width = MIN_OUTER_WIDTH
         self._terminal_height = MIN_OUTER_HEIGHT
 
@@ -406,6 +407,34 @@ class MarqueeApp(App):
             line.append(content, style=style)
         return line
 
+    FOOTER_SEGMENTS = [
+        (None, "(Q)uit "),
+        ("s", "(S)tart "),
+        ("x", "(X)Stop "),
+        ("e", "(E)dit "),
+        ("slash", "(/)Ad-hoc "),
+        ("i", "(I)nfo "),
+        (None, "↑↓/jk Nav "),
+        ("enter", "⏎ Launch"),
+    ]
+
+    def _footer_parts(self, width: int) -> list:
+        """Keybind glossary as (text, style) parts, with whichever key was
+        last pressed (from FOOTER_SEGMENTS) highlighted like a selected row —
+        immediate confirmation that the press registered, even before its
+        effect (e.g. mpv/chatterino relaunching) is visible."""
+        plain = "".join(text for _, text in self.FOOTER_SEGMENTS)
+        if cell_len(plain) > width:
+            return [(set_cell_size(plain, width), None)]  # narrow-terminal fallback
+        pad = width - cell_len(plain)
+        parts = []
+        for i, (key, text) in enumerate(self.FOOTER_SEGMENTS):
+            if i == len(self.FOOTER_SEGMENTS) - 1:
+                text = text + " " * pad
+            style = HIGHLIGHT_STYLE if key is not None and key == self.last_footer_key else None
+            parts.append((text, style))
+        return parts
+
     def render_frame(self) -> None:
         # Widths below are hand-tuned (not the plan's original formulas, which had
         # off-by-one/two errors) to keep every rendered line at exactly outer_width
@@ -499,23 +528,27 @@ class MarqueeApp(App):
         for _ in range(max(0, padding_needed)):
             lines.append(Text("║" + " " * inner_width + "║", style=B))
 
-        footer = "(Q)uit (S)tart (X)Stop (E)dit (/)Ad-hoc (I)nfo ↑↓/jk Nav ⏎ Launch"
-        lines.append(Text("║ " + set_cell_size(footer, inner_width - 2) + " ║", style=B))
+        footer_parts = self._footer_parts(inner_width - 2)
+        lines.append(self._styled_line(("║ ", B), *footer_parts, (" ║", B)))
         lines.append(Text("╚" + "═" * inner_width + "╝", style=B))
 
         frame = Text("\n").join(lines)
         self.query_one("#frame", Static).update(frame)
 
     def action_move_up(self) -> None:
+        self.last_footer_key = None
         self.nav.move_up()
         self.render_frame()
 
     def action_move_down(self) -> None:
+        self.last_footer_key = None
         self.nav.move_down()
         self.render_frame()
 
     def action_launch(self) -> None:
+        self.last_footer_key = "enter"
         if not (0 <= self.nav.index < len(self.entries)):
+            self.render_frame()
             return
         streamer = self.entries[self.nav.index].username
         with open(CONTROL_FILE, 'w') as f:
@@ -524,9 +557,13 @@ class MarqueeApp(App):
             self.start_service()
         self.ad_hoc_mode = None
         self._pending_manual_switch = (streamer, time.monotonic())
+        # Immediate feedback rather than waiting for the daemon's status file
+        # to confirm the switch, which can lag up to its own poll interval.
+        self.transition = {"kind": "manual", "started": time.monotonic()}
         self.render_frame()
 
     def action_ad_hoc_start(self) -> None:
+        self.last_footer_key = "slash"
         self.ad_hoc.start()
         self.render_frame()
 
@@ -535,6 +572,7 @@ class MarqueeApp(App):
         self.render_frame()
 
     def action_edit_list(self) -> None:
+        self.last_footer_key = "e"
         import subprocess as sp
         with self.suspend():
             try:
@@ -545,7 +583,9 @@ class MarqueeApp(App):
         self.render_frame()
 
     async def action_toggle_info(self) -> None:
+        self.last_footer_key = "i"
         if not self.current_stream:
+            self.render_frame()
             return
         info = self.live_streams.get(self.current_stream, {})
         modal = InfoModal(self.current_stream, info.get('title', '(unknown)'))
@@ -589,18 +629,20 @@ class MarqueeApp(App):
         sp.run(["pkill", "-x", "chatterino"], capture_output=True)
 
     def action_start_service(self) -> None:
+        self.last_footer_key = "s"
         if not self.daemon_running():
             self.start_service()
             self.refresh_data(force=True)
-            self.render_frame()
+        self.render_frame()
 
     def action_stop_service(self) -> None:
+        self.last_footer_key = "x"
         if self.daemon_running():
             self.stop_service()
             self.current_stream = None
             self.stream_alive = False
             self.refresh_data(force=True)
-            self.render_frame()
+        self.render_frame()
 
     def action_request_quit(self) -> None:
         import subprocess as sp
@@ -669,6 +711,9 @@ class MarqueeApp(App):
             self.start_service()
         self.ad_hoc_mode = mode.value
         self._pending_manual_switch = (streamer, time.monotonic())
+        # Immediate feedback rather than waiting for the daemon's status file
+        # to confirm the switch, which can lag up to its own poll interval.
+        self.transition = {"kind": "manual", "started": time.monotonic()}
         self.render_frame()
 
     def spawn_one_shot(self, streamer: str) -> None:
@@ -676,7 +721,7 @@ class MarqueeApp(App):
         socket_path = SCRIPT_DIR / f".mpv-oneshot-{streamer}.sock"
         socket_path.unlink(missing_ok=True)
         player_args = (
-            "--profile=twitch --volume=75 --force-seekable=yes "
+            "--profile=twitch --volume=60 --force-seekable=yes "
             "--demuxer-lavf-o=fflags=+genpts+discardcorrupt "
             f"--input-ipc-server={socket_path}"
         )

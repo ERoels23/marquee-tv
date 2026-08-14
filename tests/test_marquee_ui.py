@@ -360,6 +360,33 @@ async def test_enter_launches_highlighted_stream(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_enter_shows_transition_text_immediately(tmp_path, monkeypatch):
+    # Regression: the transition text previously only appeared once the
+    # daemon's status file confirmed the switch (up to its own poll interval
+    # later), instead of the instant it's requested.
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\nbeta\n")
+    control_file = tmp_path / ".control"
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr("marquee_ui.CONTROL_FILE", control_file)
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: True)
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.transition is None
+        app.nav.index = 1
+        await pilot.press("enter")
+        assert app.transition is not None
+        assert app.transition["kind"] == "manual"
+        frame = app.query_one("#frame")
+        assert "NEW STREAM SELECTED" in frame.content
+
+
+@pytest.mark.asyncio
 async def test_enter_with_empty_streamer_list_does_not_crash_or_write_control(tmp_path, monkeypatch):
     streamers_file = tmp_path / "streamers.txt"
     streamers_file.write_text("")
@@ -882,6 +909,55 @@ async def test_start_service_noop_when_already_running(tmp_path, monkeypatch):
         await pilot.pause()
         await pilot.press("s")
         assert start_calls["count"] == 0  # already running, should not call start_service again
+
+
+@pytest.mark.asyncio
+async def test_footer_key_highlight_set_and_cleared(tmp_path, monkeypatch):
+    from rich.cells import cell_len
+
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\nbeta\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: True)
+
+    def footer_highlighted_text(app):
+        footer = [l for l in app.query_one("#frame").content.split("\n") if "uit" in l.plain][0]
+        from marquee_ui import HIGHLIGHT_STYLE
+        spans = [s for s in footer.spans if str(s.style) == HIGHLIGHT_STYLE]
+        if not spans:
+            return None
+        span = spans[0]
+        return footer.plain[span.start:span.end].strip()
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.last_footer_key is None
+        assert footer_highlighted_text(app) is None
+
+        await pilot.press("s")
+        assert app.last_footer_key == "s"
+        assert footer_highlighted_text(app) == "(S)tart"
+
+        # Any other tracked key re-highlights its own segment.
+        await pilot.press("x")
+        assert app.last_footer_key == "x"
+        assert footer_highlighted_text(app) == "(X)Stop"
+
+        # Arrow/j/k navigation clears it entirely.
+        await pilot.press("j")
+        assert app.last_footer_key is None
+        assert footer_highlighted_text(app) is None
+
+        await pilot.press("i")  # no current stream — action no-ops but key still registers
+        assert app.last_footer_key == "i"
+        assert footer_highlighted_text(app) == "(I)nfo"
+
+        await pilot.press("up")
+        assert app.last_footer_key is None
 
 
 @pytest.mark.asyncio
