@@ -35,7 +35,7 @@ class RowData:
     game: str = ""
     title: str = ""
     started_at: Optional[str] = None
-    last_seen: Optional[str] = None
+    last_seen: Optional[dict] = None  # {"at": iso_str, "game": str|None, "title": str|None}
     username: str = ""
 
 
@@ -117,5 +117,12 @@ def render_row_expanded_detail(row: RowData, width: int) -> str:
     if row.is_live:
         detail = row.title
     else:
-        detail = f"last live: {format_last_seen(row.last_seen)}"
+        last_seen_at = row.last_seen.get('at') if row.last_seen else None
+        parts = [f"last live: {format_last_seen(last_seen_at)}"]
+        if row.last_seen:
+            if row.last_seen.get('game'):
+                parts.append(row.last_seen['game'])
+            if row.last_seen.get('title'):
+                parts.append(row.last_seen['title'])
+        detail = " | ".join(parts)
     return set_cell_size(truncate_text("  " + detail, width), width)

@@ -135,9 +135,33 @@ def test_render_row_expanded_detail_offline_unknown():
 
 
 def test_render_row_expanded_detail_offline_with_last_seen():
-    row = RowData(name="Bob", is_live=False, last_seen="2026-08-10T12:00:00Z")
+    row = RowData(name="Bob", is_live=False, last_seen={"at": "2026-08-10T12:00:00Z", "game": None, "title": None})
     detail = render_row_expanded_detail(row, 60)
     assert "last live:" in detail
+
+
+def test_render_row_expanded_detail_offline_shows_game_and_title_pipe_separated():
+    row = RowData(name="Bob", is_live=False, last_seen={
+        "at": "2026-08-10T12:00:00Z", "game": "Machine Party", "title": "this is the stream title",
+    })
+    detail = render_row_expanded_detail(row, 80)
+    assert "last live:" in detail
+    assert "Machine Party" in detail
+    assert "this is the stream title" in detail
+    assert "last live:" in detail.split(" | ")[0]
+    assert detail.split(" | ")[1].strip() == "Machine Party"
+    assert detail.split(" | ")[2].strip() == "this is the stream title"
+
+
+def test_render_row_expanded_detail_offline_backfilled_title_only_no_game():
+    # VOD backfill has no category — only "last live" + title should show.
+    row = RowData(name="Bob", is_live=False, last_seen={
+        "at": "2026-08-10T12:00:00Z", "game": None, "title": "Some VOD title",
+    })
+    detail = render_row_expanded_detail(row, 80)
+    parts = detail.strip().split(" | ")
+    assert len(parts) == 2
+    assert "Some VOD title" in parts[1]
 
 
 def test_render_header_narrow_width_emoji_alignment():

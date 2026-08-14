@@ -296,9 +296,15 @@ class MarqueeApp(App):
             return
         try:
             with open(LAST_SEEN_FILE, 'r') as f:
-                self.last_seen = json.load(f)
+                data = json.load(f)
         except (json.JSONDecodeError, OSError):
-            pass
+            return
+        # Migrate the legacy flat "streamer -> ISO timestamp" format to
+        # {"at": ..., "game": ..., "title": ...}.
+        self.last_seen = {
+            streamer: ({"at": value, "game": None, "title": None} if isinstance(value, str) else value)
+            for streamer, value in data.items()
+        }
 
     def tick(self) -> None:
         self.refresh_data()

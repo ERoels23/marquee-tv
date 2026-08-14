@@ -43,7 +43,7 @@ def test_get_live_streams_empty_priority_list_skips_api_call(monkeypatch):
 def test_backfill_last_seen_uses_most_recent_vod_for_missing_entries(monkeypatch):
     ctrl = TwitchTVController.__new__(TwitchTVController)
     ctrl.priority_list = ["alpha", "beta", "gamma"]
-    ctrl.last_seen = {"gamma": "2026-01-01T00:00:00+00:00"}  # already known — must be left untouched
+    ctrl.last_seen = {"gamma": {"at": "2026-01-01T00:00:00+00:00", "game": "g", "title": "t"}}  # already known
     save_calls = {"count": 0}
     ctrl._save_last_seen = lambda: save_calls.__setitem__("count", save_calls["count"] + 1)
 
@@ -56,7 +56,9 @@ def test_backfill_last_seen_uses_most_recent_vod_for_missing_entries(monkeypatch
         if "videos" in cmd:
             joined = " ".join(cmd)
             if "user_id=111" in joined:
-                return mock.Mock(returncode=0, stdout=json.dumps({"data": [{"created_at": "2026-08-01T10:00:00Z"}]}))
+                return mock.Mock(returncode=0, stdout=json.dumps({"data": [
+                    {"created_at": "2026-08-01T10:00:00Z", "title": "Some VOD title"},
+                ]}))
             if "user_id=222" in joined:
                 return mock.Mock(returncode=0, stdout=json.dumps({"data": []}))  # VODs disabled/none available
         raise AssertionError(f"unexpected command: {cmd}")
@@ -64,16 +66,18 @@ def test_backfill_last_seen_uses_most_recent_vod_for_missing_entries(monkeypatch
     monkeypatch.setattr("marquee_daemon.subprocess.run", fake_run)
     ctrl.backfill_last_seen()
 
-    assert ctrl.last_seen["alpha"] == "2026-08-01T10:00:00Z"
+    # VOD history has no category field, only title — game stays None until
+    # the daemon personally observes the streamer live.
+    assert ctrl.last_seen["alpha"] == {"at": "2026-08-01T10:00:00Z", "game": None, "title": "Some VOD title"}
     assert "beta" not in ctrl.last_seen  # no VODs — left missing, not fabricated
-    assert ctrl.last_seen["gamma"] == "2026-01-01T00:00:00+00:00"  # untouched
+    assert ctrl.last_seen["gamma"] == {"at": "2026-01-01T00:00:00+00:00", "game": "g", "title": "t"}  # untouched
     assert save_calls["count"] == 1
 
 
 def test_backfill_last_seen_skips_entirely_when_nothing_missing(monkeypatch):
     ctrl = TwitchTVController.__new__(TwitchTVController)
     ctrl.priority_list = ["alpha"]
-    ctrl.last_seen = {"alpha": "2026-01-01T00:00:00+00:00"}
+    ctrl.last_seen = {"alpha": {"at": "2026-01-01T00:00:00+00:00", "game": None, "title": None}}
 
     def fake_run(*a, **kw):
         raise AssertionError("should not query the API when nothing is missing")

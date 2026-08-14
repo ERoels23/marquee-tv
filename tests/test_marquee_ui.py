@@ -253,7 +253,10 @@ def test_refresh_data_reloads_last_seen_on_cheap_tick(tmp_path, monkeypatch):
     last_seen_file.write_text(json.dumps({"teststreamer": "2026-08-14T00:00:00+00:00"}))
     app.refresh_data(force=False)  # cheap tick — must still pick up the new file
 
-    assert app.last_seen.get("teststreamer") == "2026-08-14T00:00:00+00:00"
+    # Legacy flat-string format is migrated to the richer shape on load.
+    assert app.last_seen.get("teststreamer") == {
+        "at": "2026-08-14T00:00:00+00:00", "game": None, "title": None,
+    }
 
 
 @pytest.mark.asyncio

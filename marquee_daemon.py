@@ -67,7 +67,7 @@ class TwitchTVController:
         self.current_socket_path: Optional[Path] = None
         self.last_known_game: Optional[str] = None
         self.last_known_title: Optional[str] = None
-        self.last_seen: Dict[str, str] = self._load_last_seen()
+        self.last_seen: Dict[str, Dict] = self._load_last_seen()
         self.load_priority_list()
         self._streamers_mtime = STREAMERS_FILE.stat().st_mtime
 
@@ -189,7 +189,13 @@ class TwitchTVController:
                     continue
                 videos = json.loads(result.stdout).get('data', [])
                 if videos:
-                    self.last_seen[streamer] = videos[0]['created_at']
+                    # VOD history has no category field, only title — game
+                    # stays unknown until we personally observe them live.
+                    self.last_seen[streamer] = {
+                        "at": videos[0]['created_at'],
+                        "game": None,
+                        "title": videos[0].get('title'),
+                    }
                     updated = True
             except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError):
                 continue
@@ -312,14 +318,21 @@ class TwitchTVController:
                 pass
         return None
 
-    def _load_last_seen(self) -> Dict[str, str]:
-        if LAST_SEEN_FILE.exists():
-            try:
-                with open(LAST_SEEN_FILE, 'r') as f:
-                    return json.load(f)
-            except (json.JSONDecodeError, OSError):
-                return {}
-        return {}
+    def _load_last_seen(self) -> Dict[str, Dict]:
+        if not LAST_SEEN_FILE.exists():
+            return {}
+        try:
+            with open(LAST_SEEN_FILE, 'r') as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return {}
+        # Migrate the legacy flat "streamer -> ISO timestamp" format to
+        # {"at": ..., "game": ..., "title": ...} so existing last-seen data
+        # isn't lost when this shape was introduced.
+        return {
+            streamer: ({"at": value, "game": None, "title": None} if isinstance(value, str) else value)
+            for streamer, value in data.items()
+        }
 
     def _save_last_seen(self):
         with open(LAST_SEEN_FILE, 'w') as f:
@@ -358,8 +371,10 @@ class TwitchTVController:
                     self.live_streams = self.get_live_streams()
                     self.last_api_update = current_time
                     now_iso = datetime.now(timezone.utc).isoformat()
-                    for streamer in self.live_streams:
-                        self.last_seen[streamer] = now_iso
+                    for streamer, info in self.live_streams.items():
+                        self.last_seen[streamer] = {
+                            "at": now_iso, "game": info.get('game'), "title": info.get('title'),
+                        }
                     self._save_last_seen()
 
                     if (self.current_stream and self.is_stream_alive()
