@@ -144,6 +144,59 @@ class TwitchTVController:
             print(f"Error parsing Twitch API response: {e}")
             return live_streams
 
+    def backfill_last_seen(self) -> None:
+        """One-time startup pass: for any priority-list entry with no last_seen
+        data (never personally observed live since last_seen.json was created),
+        ask Twitch for their most recent broadcast VOD and use its start time.
+        This only reaches back as far as VOD retention allows (14 days, 60 for
+        Partners) and returns nothing for channels with VODs disabled — it's a
+        best-effort backfill, not a substitute for the daemon's own polling.
+        """
+        missing = [s for s in self.priority_list if s not in self.last_seen]
+        if not missing:
+            return
+        print(f"Backfilling last-seen data for {len(missing)} streamer(s)...")
+
+        user_ids: Dict[str, str] = {}
+        try:
+            for i in range(0, len(missing), 100):
+                batch = missing[i:i + 100]
+                cmd = ["/usr/bin/twitch", "api", "get", "users"]
+                for streamer in batch:
+                    cmd += ["-q", f"login={streamer}"]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                if result.returncode != 0:
+                    continue
+                data = json.loads(result.stdout)
+                for user in data.get('data', []):
+                    user_ids[user['login'].lower()] = user['id']
+        except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError) as e:
+            print(f"Error resolving user IDs for last-seen backfill: {e}")
+            return
+
+        updated = False
+        for streamer in missing:
+            user_id = user_ids.get(streamer)
+            if not user_id:
+                continue
+            try:
+                result = subprocess.run(
+                    ["/usr/bin/twitch", "api", "get", "videos",
+                     "-q", f"user_id={user_id}", "-q", "type=archive", "-q", "first=1"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if result.returncode != 0:
+                    continue
+                videos = json.loads(result.stdout).get('data', [])
+                if videos:
+                    self.last_seen[streamer] = videos[0]['created_at']
+                    updated = True
+            except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError):
+                continue
+
+        if updated:
+            self._save_last_seen()
+
     def get_highest_priority_live(self, live_streams: Dict) -> Optional[str]:
         """Return the highest priority streamer that's currently live"""
         for streamer in self.priority_list:
@@ -294,6 +347,7 @@ class TwitchTVController:
         """Main event loop"""
         print("Starting TwitchTV...")
         print(f"Priority list: {', '.join(self.priority_list)}")
+        self.backfill_last_seen()
 
         while self.running:
             try:
