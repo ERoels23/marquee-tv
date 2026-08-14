@@ -261,6 +261,68 @@ async def test_long_list_scroll_offset_moves_one_row_at_a_time(tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_separator_line_renders_and_connects_to_box_border(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\n---\nbeta\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert len(app.entries) == 3
+        assert app.entries[1].is_separator is True
+
+        lines = app.query_one("#frame").content.split("\n")
+        separator_lines = [l for l in lines if l.plain.strip().startswith("║") and "├" in l.plain and "┤" in l.plain]
+        assert len(separator_lines) == 1
+        # Connects with the box's own side border style (║ outer, then the tee).
+        assert separator_lines[0].plain.lstrip("║").lstrip().startswith("├")
+
+
+@pytest.mark.asyncio
+async def test_navigation_skips_separator_line(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\n---\nbeta\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.nav.index == 0  # alpha, never lands on the separator at index 1
+
+        await pilot.press("j")
+        await pilot.pause()
+        assert app.nav.index == 2  # beta — skipped straight past the separator
+
+        await pilot.press("j")
+        await pilot.pause()
+        assert app.nav.index == 0  # wraps back to alpha, skipping the separator again
+
+        await pilot.press("k")
+        await pilot.pause()
+        assert app.nav.index == 2  # wraps upward, also skipping the separator
+
+
+@pytest.mark.asyncio
+async def test_separator_excluded_from_daemon_priority_list_but_not_ui_entries(tmp_path, monkeypatch):
+    # The daemon-facing usernames() list must never include the separator
+    # (it's not a real streamer to query/launch), but the UI's own entries
+    # list keeps it so it can be rendered in its correct position.
+    from priority_list import parse_streamers_file, usernames
+
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\n---\nbeta\n")
+    entries = parse_streamers_file(streamers_file)
+    assert len(entries) == 3
+    assert usernames(entries) == ["alpha", "beta"]
+
+@pytest.mark.asyncio
 async def test_frame_width_matches_widget_width_when_content_taller_than_terminal(tmp_path, monkeypatch):
     # Screen defaults to overflow-y: auto, which reserves a scrollbar gutter
     # once content is taller than the terminal (e.g. a long priority list on a

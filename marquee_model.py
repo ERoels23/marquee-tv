@@ -9,28 +9,60 @@ class AdHocMode(Enum):
 
 
 class ListNavigator:
-    def __init__(self, count: int):
-        self.count = count
-        self.index = 0 if count > 0 else -1
+    """Navigates a list of `count` items, optionally skipping indices in
+    `skip_indices` (e.g. separator rows) — those positions are never landed
+    on by move_up/move_down or selected as the initial/clamped index."""
 
-    def set_count(self, count: int) -> None:
+    def __init__(self, count: int, skip_indices=None):
         self.count = count
+        self.skip_indices = set(skip_indices) if skip_indices else set()
+        self.index = self._first_selectable()
+
+    def _first_selectable(self) -> int:
+        for i in range(self.count):
+            if i not in self.skip_indices:
+                return i
+        return -1  # empty, or every index is skipped
+
+    def _nearest_selectable(self, start: int) -> int:
+        """Search backward from `start`, then fall back to the first
+        selectable index — used when `start` itself turns out to be skipped."""
+        for i in range(start, -1, -1):
+            if i not in self.skip_indices:
+                return i
+        return self._first_selectable()
+
+    def set_count(self, count: int, skip_indices=None) -> None:
+        self.count = count
+        self.skip_indices = set(skip_indices) if skip_indices else set()
         if count == 0:
             self.index = -1
         elif self.index < 0:
-            self.index = 0
+            self.index = self._first_selectable()
         elif self.index >= count:
-            self.index = count - 1
+            self.index = self._nearest_selectable(count - 1)
+        elif self.index in self.skip_indices:
+            self.index = self._nearest_selectable(self.index)
 
     def move_up(self) -> None:
-        if self.count == 0:
+        if self.count == 0 or self.index < 0:
             return
-        self.index = (self.index - 1) % self.count
+        i = self.index
+        for _ in range(self.count):
+            i = (i - 1) % self.count
+            if i not in self.skip_indices:
+                self.index = i
+                return
 
     def move_down(self) -> None:
-        if self.count == 0:
+        if self.count == 0 or self.index < 0:
             return
-        self.index = (self.index + 1) % self.count
+        i = self.index
+        for _ in range(self.count):
+            i = (i + 1) % self.count
+            if i not in self.skip_indices:
+                self.index = i
+                return
 
 
 class AdHocFlowState(Enum):

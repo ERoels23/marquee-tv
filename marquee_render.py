@@ -38,6 +38,7 @@ class RowData:
     started_at: Optional[str] = None
     last_seen: Optional[dict] = None  # {"at": iso_str, "game": str|None, "title": str|None}
     username: str = ""
+    is_separator: bool = False  # a "---" line in streamers.txt — not a real streamer
 
 
 STATUS_DOT = "●"  # 1 cell wide, colorable

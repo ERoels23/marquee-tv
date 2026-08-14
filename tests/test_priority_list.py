@@ -56,3 +56,27 @@ def test_parse_multiple_pipes(tmp_path):
     entries = parse_streamers_file(f)
     assert entries[0].username == "username"
     assert entries[0].nickname == "nick|name|extra"
+
+
+def test_parse_separator_line(tmp_path):
+    f = tmp_path / "streamers.txt"
+    f.write_text("alpha\n---\nbeta\n")
+    entries = parse_streamers_file(f)
+    assert len(entries) == 3
+    assert entries[0].is_separator is False
+    assert entries[1].is_separator is True
+    assert entries[2].is_separator is False
+
+
+def test_separator_excluded_from_usernames(tmp_path):
+    f = tmp_path / "streamers.txt"
+    f.write_text("alpha\n---\nbeta\n---\ngamma\n")
+    entries = parse_streamers_file(f)
+    assert usernames(entries) == ["alpha", "beta", "gamma"]
+
+
+def test_separator_with_surrounding_whitespace(tmp_path):
+    f = tmp_path / "streamers.txt"
+    f.write_text("alpha\n  ---  \nbeta\n")
+    entries = parse_streamers_file(f)
+    assert entries[1].is_separator is True

@@ -7,6 +7,7 @@ from typing import List, Optional
 class StreamerEntry:
     username: str
     nickname: Optional[str] = None
+    is_separator: bool = False
 
     @property
     def display_name(self) -> str:
@@ -20,6 +21,9 @@ def parse_streamers_file(path: Path) -> List[StreamerEntry]:
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
+            if line == "---":
+                entries.append(StreamerEntry(username="", is_separator=True))
+                continue
             if "|" in line:
                 username, nickname = line.split("|", 1)
                 username = username.strip().lower()
@@ -32,4 +36,4 @@ def parse_streamers_file(path: Path) -> List[StreamerEntry]:
 
 
 def usernames(entries: List[StreamerEntry]) -> List[str]:
-    return [e.username for e in entries]
+    return [e.username for e in entries if not e.is_separator]

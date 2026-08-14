@@ -86,6 +86,67 @@ def test_navigator_set_count_empty_to_filled():
     assert nav.index == 0
 
 
+def test_navigator_initial_index_skips_leading_separator():
+    nav = ListNavigator(3, skip_indices={0})
+    assert nav.index == 1
+
+
+def test_navigator_move_down_skips_separator():
+    nav = ListNavigator(3, skip_indices={1})
+    assert nav.index == 0
+    nav.move_down()
+    assert nav.index == 2  # skipped index 1
+
+
+def test_navigator_move_up_skips_separator():
+    nav = ListNavigator(3, skip_indices={1})
+    nav.index = 2
+    nav.move_up()
+    assert nav.index == 0  # skipped index 1
+
+
+def test_navigator_move_down_wraps_past_separator():
+    nav = ListNavigator(3, skip_indices={0})
+    nav.index = 2
+    nav.move_down()
+    assert nav.index == 1  # wraps around, skipping index 0
+
+
+def test_navigator_move_up_wraps_past_separator():
+    nav = ListNavigator(3, skip_indices={2})
+    nav.index = 0
+    nav.move_up()
+    assert nav.index == 1  # wraps around, skipping index 2
+
+
+def test_navigator_consecutive_separators_skipped():
+    nav = ListNavigator(4, skip_indices={1, 2})
+    assert nav.index == 0
+    nav.move_down()
+    assert nav.index == 3  # skips both 1 and 2
+
+
+def test_navigator_all_separators_has_no_valid_index():
+    nav = ListNavigator(2, skip_indices={0, 1})
+    assert nav.index == -1
+    nav.move_down()  # must not raise
+    assert nav.index == -1
+
+
+def test_navigator_set_count_nudges_off_new_separator():
+    # Index was valid, but the new skip_indices makes that same position a
+    # separator (e.g. streamers.txt was edited) — should move off it.
+    nav = ListNavigator(3)
+    nav.index = 1
+    nav.set_count(3, skip_indices={1})
+    assert nav.index == 0
+
+    nav2 = ListNavigator(3)
+    nav2.index = 0
+    nav2.set_count(3, skip_indices={0})
+    assert nav2.index == 1
+
+
 def test_adhoc_flow_type_char_when_not_typing():
     flow = AdHocFlow()
     flow.type_char("x")  # not started yet

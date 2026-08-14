@@ -262,7 +262,8 @@ class MarqueeApp(App):
 
     def load_entries(self) -> None:
         self.entries = parse_streamers_file(STREAMERS_FILE)
-        self.nav.set_count(len(self.entries))
+        separator_indices = {i for i, e in enumerate(self.entries) if e.is_separator}
+        self.nav.set_count(len(self.entries), skip_indices=separator_indices)
 
     def daemon_running(self) -> bool:
         result = subprocess.run(
@@ -441,6 +442,9 @@ class MarqueeApp(App):
     def _row_data(self) -> List[RowData]:
         rows = []
         for entry in self.entries:
+            if entry.is_separator:
+                rows.append(RowData(name="", is_live=False, is_separator=True))
+                continue
             info = self.live_streams.get(entry.username)
             is_live = info is not None
             rows.append(RowData(
@@ -602,7 +606,15 @@ class MarqueeApp(App):
             ))
         for i in range(start, end):
             row = rows[i]
-            if i == self.nav.index:
+            if row.is_separator:
+                # A "---" line in streamers.txt: a horizontal rule connecting
+                # with the box's own side borders, never highlighted or
+                # landed on by navigation (ListNavigator skips it).
+                lines.append(Text(
+                    "║" + " " * MARGIN + "├" + "─" * (list_inner + 2) + "┤" + " " * MARGIN + "║",
+                    style=B,
+                ))
+            elif i == self.nav.index:
                 lines.append(Text("║" + " " * inner_width + "║", style=B))
                 collapsed = render_row_collapsed(row, inner_width - 3, highlighted=True)
                 highlight_dot_style = f"bold {LIVE_DOT_STYLE if row.is_live else OFFLINE_DOT_STYLE} on #b4befe"
