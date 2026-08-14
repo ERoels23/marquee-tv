@@ -40,36 +40,62 @@ def test_get_live_streams_empty_priority_list_skips_api_call(monkeypatch):
     assert ctrl.get_live_streams() == {}
 
 
-def test_backfill_last_seen_uses_most_recent_vod_for_missing_entries(monkeypatch):
+def _fake_backfill_run(video_data=None, channel_data=None, user_map=None):
+    """Builds a fake subprocess.run for backfill_last_seen tests: routes
+    users/videos/channels commands to canned responses keyed by user_id."""
+    user_map = user_map or {}
+    video_data = video_data or {}
+    channel_data = channel_data or {}
+
+    def fake_run(cmd, **kwargs):
+        joined = " ".join(cmd)
+        if "users" in cmd:
+            return mock.Mock(returncode=0, stdout=json.dumps({"data": [
+                {"login": login, "id": uid} for login, uid in user_map.items()
+            ]}))
+        if "videos" in cmd:
+            for uid, videos in video_data.items():
+                if f"user_id={uid}" in joined:
+                    return mock.Mock(returncode=0, stdout=json.dumps({"data": videos}))
+            return mock.Mock(returncode=0, stdout=json.dumps({"data": []}))
+        if "channels" in cmd:
+            for uid, channels in channel_data.items():
+                if f"broadcaster_id={uid}" in joined:
+                    return mock.Mock(returncode=0, stdout=json.dumps({"data": channels}))
+            return mock.Mock(returncode=0, stdout=json.dumps({"data": []}))
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    return fake_run
+
+
+def test_backfill_last_seen_combines_vod_timestamp_with_channel_category(monkeypatch):
+    # VOD history has no category field at all, but /channels (Get Channel
+    # Information) reports the channel's current game/title even while
+    # offline — combine timestamp from the former with category from the
+    # latter, since neither endpoint alone has everything.
     ctrl = TwitchTVController.__new__(TwitchTVController)
     ctrl.priority_list = ["alpha", "beta", "gamma"]
     ctrl.last_seen = {"gamma": {"at": "2026-01-01T00:00:00+00:00", "game": "g", "title": "t"}}  # already known
     save_calls = {"count": 0}
     ctrl._save_last_seen = lambda: save_calls.__setitem__("count", save_calls["count"] + 1)
 
-    def fake_run(cmd, **kwargs):
-        if "users" in cmd:
-            return mock.Mock(returncode=0, stdout=json.dumps({"data": [
-                {"login": "alpha", "id": "111"},
-                {"login": "beta", "id": "222"},
-            ]}))
-        if "videos" in cmd:
-            joined = " ".join(cmd)
-            if "user_id=111" in joined:
-                return mock.Mock(returncode=0, stdout=json.dumps({"data": [
-                    {"created_at": "2026-08-01T10:00:00Z", "title": "Some VOD title"},
-                ]}))
-            if "user_id=222" in joined:
-                return mock.Mock(returncode=0, stdout=json.dumps({"data": []}))  # VODs disabled/none available
-        raise AssertionError(f"unexpected command: {cmd}")
-
+    fake_run = _fake_backfill_run(
+        user_map={"alpha": "111", "beta": "222"},
+        video_data={
+            "111": [{"created_at": "2026-08-01T10:00:00Z", "title": "Some VOD title"}],
+            "222": [],  # VODs disabled/none available
+        },
+        channel_data={
+            "111": [{"game_name": "Some Category", "title": "Current channel title"}],
+        },
+    )
     monkeypatch.setattr("marquee_daemon.subprocess.run", fake_run)
     ctrl.backfill_last_seen()
 
-    # VOD history has no category field, only title — game stays None until
-    # the daemon personally observes the streamer live.
-    assert ctrl.last_seen["alpha"] == {"at": "2026-08-01T10:00:00Z", "game": None, "title": "Some VOD title"}
-    assert "beta" not in ctrl.last_seen  # no VODs — left missing, not fabricated
+    # Title prefers the VOD's (what they were actually broadcasting), game
+    # can only ever come from /channels.
+    assert ctrl.last_seen["alpha"] == {"at": "2026-08-01T10:00:00Z", "game": "Some Category", "title": "Some VOD title"}
+    assert "beta" not in ctrl.last_seen  # no VOD means no timestamp — nothing to record
     assert ctrl.last_seen["gamma"] == {"at": "2026-01-01T00:00:00+00:00", "game": "g", "title": "t"}  # untouched
     assert save_calls["count"] == 1
 
@@ -77,10 +103,8 @@ def test_backfill_last_seen_uses_most_recent_vod_for_missing_entries(monkeypatch
 def test_backfill_last_seen_skips_entirely_when_nothing_missing(monkeypatch):
     ctrl = TwitchTVController.__new__(TwitchTVController)
     ctrl.priority_list = ["alpha"]
-    # Has both a timestamp and a title, so it doesn't count as missing —
-    # entries with a timestamp but no title (e.g. backfilled before the
-    # title field existed) DO still count as missing; see the retry test.
-    ctrl.last_seen = {"alpha": {"at": "2026-01-01T00:00:00+00:00", "game": None, "title": "t"}}
+    # Has a timestamp, game, and title — nothing missing, so no API calls.
+    ctrl.last_seen = {"alpha": {"at": "2026-01-01T00:00:00+00:00", "game": "g", "title": "t"}}
 
     def fake_run(*a, **kw):
         raise AssertionError("should not query the API when nothing is missing")
@@ -89,32 +113,53 @@ def test_backfill_last_seen_skips_entirely_when_nothing_missing(monkeypatch):
     ctrl.backfill_last_seen()  # must not raise
 
 
+def test_backfill_last_seen_retries_entries_missing_only_game(monkeypatch):
+    # Entries with a timestamp and title but no game (e.g. backfilled before
+    # the /channels lookup existed) should still be retried for category —
+    # without re-querying /videos, since the timestamp is already known.
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    ctrl.priority_list = ["alpha"]
+    ctrl.last_seen = {"alpha": {"at": "2026-01-01T00:00:00+00:00", "game": None, "title": "Existing title"}}
+    ctrl._save_last_seen = lambda: None
+
+    fake_run = _fake_backfill_run(
+        user_map={"alpha": "111"},
+        channel_data={"111": [{"game_name": "Newly fetched category", "title": "Channel's current title"}]},
+    )
+    monkeypatch.setattr("marquee_daemon.subprocess.run", fake_run)
+    ctrl.backfill_last_seen()
+
+    assert ctrl.last_seen["alpha"] == {
+        "at": "2026-01-01T00:00:00+00:00",  # existing timestamp preserved, not overwritten
+        "game": "Newly fetched category",  # missing game filled in
+        "title": "Existing title",  # existing title preserved, not clobbered
+    }
+
+
 def test_backfill_last_seen_retries_entries_missing_only_title(monkeypatch):
-    # Entries backfilled before the title field existed (or observed live
-    # before then) have a timestamp but no title — these should still be
-    # retried, merging in the title without clobbering the existing timestamp
-    # or a previously-known game (VOD history has no category field).
+    # When "at" is already known, /videos isn't re-queried (no need to
+    # re-derive a timestamp we already have) — so a missing title in this
+    # case can only be filled from /channels, not the original VOD's title.
     ctrl = TwitchTVController.__new__(TwitchTVController)
     ctrl.priority_list = ["alpha"]
     ctrl.last_seen = {"alpha": {"at": "2026-01-01T00:00:00+00:00", "game": "Just Chatting", "title": None}}
     ctrl._save_last_seen = lambda: None
 
     def fake_run(cmd, **kwargs):
-        if "users" in cmd:
-            return mock.Mock(returncode=0, stdout=json.dumps({"data": [{"login": "alpha", "id": "111"}]}))
         if "videos" in cmd:
-            return mock.Mock(returncode=0, stdout=json.dumps({"data": [
-                {"created_at": "2026-08-01T10:00:00Z", "title": "Newly fetched title"},
-            ]}))
-        raise AssertionError(f"unexpected command: {cmd}")
+            raise AssertionError("should not re-query /videos when at is already known")
+        return _fake_backfill_run(
+            user_map={"alpha": "111"},
+            channel_data={"111": [{"game_name": "Should not override", "title": "Newly fetched title"}]},
+        )(cmd, **kwargs)
 
     monkeypatch.setattr("marquee_daemon.subprocess.run", fake_run)
     ctrl.backfill_last_seen()
 
     assert ctrl.last_seen["alpha"] == {
         "at": "2026-01-01T00:00:00+00:00",  # existing timestamp preserved, not overwritten
-        "game": "Just Chatting",  # existing game preserved
-        "title": "Newly fetched title",  # missing title filled in
+        "game": "Just Chatting",  # existing game preserved, not clobbered by /channels
+        "title": "Newly fetched title",  # missing title filled from /channels
     }
 
 

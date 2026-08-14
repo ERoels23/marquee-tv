@@ -145,19 +145,29 @@ class TwitchTVController:
             return live_streams
 
     def backfill_last_seen(self) -> None:
-        """One-time startup pass: for any priority-list entry with no last_seen
-        data, or with a timestamp but no title yet (e.g. backfilled before the
-        title field existed, or personally observed live before that too),
-        ask Twitch for their most recent broadcast VOD and use its start time
-        and title. This only reaches back as far as VOD retention allows
-        (14 days, 60 for Partners) and returns nothing for channels with VODs
-        disabled — it's a best-effort backfill, not a substitute for the
-        daemon's own polling (which is the only source for category, since
-        VOD history has no category field).
+        """One-time startup pass: for any priority-list entry missing a
+        timestamp, game, or title, ask Twitch to fill in what it can.
+
+        Two endpoints, since neither alone has everything:
+        - /videos (their most recent broadcast VOD) has a start timestamp,
+          used only for "at" — reaches back as far as VOD retention allows
+          (14 days, 60 for Partners), and returns nothing for channels with
+          VODs disabled.
+        - /channels (Get Channel Information) has game/title even while
+          offline, since it reflects the channel's current configured
+          category and title rather than live-only data — this is what
+          makes category backfill possible at all (VOD history has no
+          category field). It's "currently configured", not necessarily
+          "as of their last broadcast", but the two are the same unless a
+          streamer edits their info while offline.
+
+        Best-effort only, not a substitute for the daemon's own polling.
         """
         missing = [
             s for s in self.priority_list
-            if s not in self.last_seen or not self.last_seen[s].get('title')
+            if s not in self.last_seen
+            or not self.last_seen[s].get('title')
+            or not self.last_seen[s].get('game')
         ]
         if not missing:
             return
@@ -185,30 +195,43 @@ class TwitchTVController:
             user_id = user_ids.get(streamer)
             if not user_id:
                 continue
-            try:
-                result = subprocess.run(
-                    ["/usr/bin/twitch", "api", "get", "videos",
-                     "-q", f"user_id={user_id}", "-q", "type=archive", "-q", "first=1"],
-                    capture_output=True, text=True, timeout=10,
-                )
-                if result.returncode != 0:
-                    continue
-                videos = json.loads(result.stdout).get('data', [])
-                if videos:
-                    # Merge rather than overwrite: an existing timestamp (from
-                    # a prior backfill or from having actually been observed
-                    # live) is at least as good as the VOD's, and VOD history
-                    # has no category field, so game — if already known — is
-                    # preserved rather than clobbered with None.
-                    existing = self.last_seen.get(streamer, {})
-                    self.last_seen[streamer] = {
-                        "at": existing.get('at') or videos[0]['created_at'],
-                        "game": existing.get('game'),
-                        "title": existing.get('title') or videos[0].get('title'),
-                    }
-                    updated = True
-            except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError):
-                continue
+            existing = self.last_seen.get(streamer, {})
+            at = existing.get('at')
+            game = existing.get('game')
+            title = existing.get('title')
+
+            if not at:
+                try:
+                    result = subprocess.run(
+                        ["/usr/bin/twitch", "api", "get", "videos",
+                         "-q", f"user_id={user_id}", "-q", "type=archive", "-q", "first=1"],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    if result.returncode == 0:
+                        videos = json.loads(result.stdout).get('data', [])
+                        if videos:
+                            at = videos[0]['created_at']
+                            title = title or videos[0].get('title')
+                except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError):
+                    pass
+
+            if not game or not title:
+                try:
+                    result = subprocess.run(
+                        ["/usr/bin/twitch", "api", "get", "channels", "-q", f"broadcaster_id={user_id}"],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    if result.returncode == 0:
+                        channels = json.loads(result.stdout).get('data', [])
+                        if channels:
+                            game = game or (channels[0].get('game_name') or None)
+                            title = title or (channels[0].get('title') or None)
+                except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError):
+                    pass
+
+            if at:  # nothing usable to record without at least a timestamp
+                self.last_seen[streamer] = {"at": at, "game": game, "title": title}
+                updated = True
 
         if updated:
             self._save_last_seen()
