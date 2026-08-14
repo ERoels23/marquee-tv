@@ -394,3 +394,48 @@ async def test_overlay_blocks_navigation_and_launch(tmp_path, monkeypatch):
 
         await pilot.press("i")  # this should still close it
         assert app.info_visible is False
+
+
+@pytest.mark.asyncio
+async def test_quit_requires_confirmation(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: False)
+
+    exited = {"called": False}
+    monkeypatch.setattr(MarqueeApp, "exit", lambda self, *a, **kw: exited.__setitem__("called", True))
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("q")
+        assert exited["called"] is False  # first press just arms confirmation
+        assert app.quit_confirm.armed is True
+        frame = app.query_one("#frame")
+        assert "Press q again to quit" in frame.content
+        await pilot.press("q")
+        assert exited["called"] is True  # second press confirms
+
+
+@pytest.mark.asyncio
+async def test_start_service_noop_when_already_running(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: True)
+
+    start_calls = {"count": 0}
+    monkeypatch.setattr(MarqueeApp, "start_service", lambda self: start_calls.__setitem__("count", start_calls["count"] + 1))
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("s")
+        assert start_calls["count"] == 0  # already running, should not call start_service again

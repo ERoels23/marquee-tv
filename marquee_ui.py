@@ -38,6 +38,9 @@ class MarqueeApp(App):
         Binding("escape", "ad_hoc_cancel", "Cancel", show=False),
         Binding("e", "edit_list", "Edit", show=False),
         Binding("i", "toggle_info", "Info", show=False),
+        Binding("s", "start_service", "Start", show=False),
+        Binding("x", "stop_service", "Stop", show=False),
+        Binding("q", "request_quit", "Quit", show=False),
     ]
 
     def __init__(self):
@@ -249,6 +252,8 @@ class MarqueeApp(App):
         lines.append("║" + " " * inner_width + "║")
 
         footer = "(Q)uit (S)tart (X)Stop (E)dit (/)Ad-hoc (I)nfo ↑↓/jk Nav ⏎ Launch"
+        if self.quit_confirm.armed:
+            footer = "Press q again to quit"
         lines.append("║ " + set_cell_size(footer, inner_width - 2) + " ║")
         lines.append("╚" + "═" * inner_width + "╝")
 
@@ -328,9 +333,34 @@ class MarqueeApp(App):
             return "(unable to fetch channel bio)"
 
     def start_service(self) -> None:
-        """Placeholder — real daemon start/stop wiring (and the 's' binding that
-        calls this) lands in Task 22. Exists now only so tests can monkeypatch it."""
-        pass
+        import subprocess as sp
+        sp.run([str(SCRIPT_DIR / "marquee.sh"), "start"], capture_output=True)
+
+    def stop_service(self) -> None:
+        import subprocess as sp
+        sp.run([str(SCRIPT_DIR / "marquee.sh"), "stop"], capture_output=True)
+        sp.run(["pkill", "-f", "mpv"], capture_output=True)
+
+    def action_start_service(self) -> None:
+        if not self.daemon_running():
+            self.start_service()
+            self.refresh_data(force=True)
+            self.render_frame()
+
+    def action_stop_service(self) -> None:
+        if self.daemon_running():
+            self.stop_service()
+            self.refresh_data(force=True)
+            self.render_frame()
+
+    def action_request_quit(self) -> None:
+        if self.quit_confirm.confirm():
+            if self.daemon_running():
+                self.stop_service()
+            self.exit()
+        else:
+            self.quit_confirm.request()
+            self.render_frame()
 
     async def on_key(self, event) -> None:
         if self.info_visible:
