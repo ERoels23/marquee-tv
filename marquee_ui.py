@@ -575,7 +575,7 @@ class MarqueeApp(App):
                     (collapsed[:1], dot_style), (collapsed[1:], None),
                     (" │" + " " * MARGIN + "║", B),
                 ))
-        nav_label = " ↑↓/jk Nav "
+        nav_label = " ↑↓/jk "
         lines.append(Text(
             "║" + " " * MARGIN + "└" + nav_label
             + "─" * (list_box_width - cell_len(nav_label)) + "┘" + " " * MARGIN + "║",
