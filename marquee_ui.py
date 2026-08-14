@@ -294,12 +294,21 @@ class MarqueeApp(App):
     def action_toggle_info(self) -> None:
         if self.info_visible:
             self.info_visible = False
-        else:
-            if not self.current_stream:
-                return
-            self.channel_bio = self._fetch_channel_bio(self.current_stream)
-            self.info_visible = True
+            self.render_frame()
+            return
+        if not self.current_stream:
+            return
+        self.channel_bio = None  # loading state
+        self.info_visible = True
         self.render_frame()
+        self.run_worker(self._load_channel_bio(self.current_stream), exclusive=True)
+
+    async def _load_channel_bio(self, streamer: str) -> None:
+        import asyncio
+        bio = await asyncio.to_thread(self._fetch_channel_bio, streamer)
+        if self.info_visible and self.current_stream == streamer:
+            self.channel_bio = bio
+            self.render_frame()
 
     def _fetch_channel_bio(self, streamer: str) -> str:
         import subprocess as sp
@@ -324,6 +333,11 @@ class MarqueeApp(App):
         pass
 
     async def on_key(self, event) -> None:
+        if self.info_visible:
+            if event.key != "i":
+                event.stop()
+                event.prevent_default()
+            return
         if self.ad_hoc.state == AdHocFlowState.TYPING:
             event.stop()
             event.prevent_default()

@@ -332,6 +332,8 @@ async def test_i_shows_overlay_with_title_and_bio(tmp_path, monkeypatch):
         app.current_stream = "alpha"
         app.live_streams = {"alpha": {"title": "Playing games", "game": "g", "viewers": 1, "started_at": None}}
         await pilot.press("i")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
         frame = app.query_one("#frame")
         assert "Playing games" in frame.content
         assert "A cool streamer bio" in frame.content
@@ -360,4 +362,35 @@ async def test_i_does_nothing_when_no_current_stream(tmp_path, monkeypatch):
         await pilot.pause()
         assert app.current_stream is None
         await pilot.press("i")
+        assert app.info_visible is False
+
+
+@pytest.mark.asyncio
+async def test_overlay_blocks_navigation_and_launch(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\nbeta\n")
+    control_file = tmp_path / ".control"
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr("marquee_ui.CONTROL_FILE", control_file)
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "_fetch_channel_bio", lambda self, streamer: "bio")
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.current_stream = "alpha"
+        app.live_streams = {"alpha": {"title": "t", "game": "g", "viewers": 1, "started_at": None}}
+        await pilot.press("i")
+        assert app.info_visible is True
+        starting_index = app.nav.index
+
+        await pilot.press("j")  # should be swallowed
+        assert app.nav.index == starting_index
+
+        await pilot.press("enter")  # should be swallowed
+        assert not control_file.exists()
+
+        await pilot.press("i")  # this should still close it
         assert app.info_visible is False
