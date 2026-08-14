@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 from unittest import mock
 
@@ -48,6 +49,65 @@ async def test_frame_width_tracks_terminal_and_updates_on_resize(tmp_path, monke
         await pilot.pause()
         first_line = app.query_one("#frame").content.split("\n")[0].plain
         assert cell_len(first_line) == 160
+
+
+def test_manual_switch_sets_manual_transition(tmp_path, monkeypatch):
+    status_file = tmp_path / ".status.json"
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", status_file)
+    app = MarqueeApp()
+    app.current_stream = "alpha"
+    app._pending_manual_switch = "beta"
+    status_file.write_text(json.dumps({"current_stream": "beta", "stream_alive": True, "live_streams": {}}))
+
+    app._load_status_file()
+
+    assert app.transition is not None
+    assert app.transition["kind"] == "manual"
+    assert app._pending_manual_switch is None  # cleared once observed
+
+
+def test_auto_switch_sets_auto_transition(tmp_path, monkeypatch):
+    status_file = tmp_path / ".status.json"
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", status_file)
+    app = MarqueeApp()
+    app.current_stream = "alpha"
+    status_file.write_text(json.dumps({"current_stream": "beta", "stream_alive": True, "live_streams": {}}))
+
+    app._load_status_file()  # no pending manual switch recorded — daemon-initiated
+
+    assert app.transition is not None
+    assert app.transition["kind"] == "auto"
+
+
+def test_no_transition_on_initial_boot(tmp_path, monkeypatch):
+    status_file = tmp_path / ".status.json"
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", status_file)
+    app = MarqueeApp()
+    assert app.current_stream is None
+    status_file.write_text(json.dumps({"current_stream": "beta", "stream_alive": True, "live_streams": {}}))
+
+    app._load_status_file()
+
+    assert app.transition is None
+
+
+def test_transition_header_lines_content_and_expiry():
+    app = MarqueeApp()
+
+    app.transition = {"kind": "auto", "started": time.monotonic()}
+    lines = app._transition_header_lines(40)
+    assert lines is not None
+    assert "FOUND HIGHER PRIORITY STREAM" in lines[0]
+    assert "SWITCHING NOW" in lines[1]
+
+    app.transition = {"kind": "manual", "started": time.monotonic()}
+    lines = app._transition_header_lines(40)
+    assert "NEW STREAM SELECTED" in lines[0]
+
+    app.transition = {"kind": "auto", "started": time.monotonic() - 10}
+    lines = app._transition_header_lines(40)
+    assert lines is None
+    assert app.transition is None  # expired transition clears itself
 
 
 def test_refresh_data_does_not_clobber_fresh_api_data_with_stale_status_file(tmp_path, monkeypatch):

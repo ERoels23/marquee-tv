@@ -28,6 +28,7 @@ CONTROL_FILE = SCRIPT_DIR / ".control"
 TWITCH_USER_ID = "60132775"
 API_UPDATE_INTERVAL = 60
 REFRESH_INTERVAL = 1.0
+TRANSITION_DURATION = 5.0
 
 MIN_OUTER_WIDTH = 60  # floor below which the box layout starts breaking down
 MARGIN = 2
@@ -133,6 +134,8 @@ class MarqueeApp(App):
         self.nav = ListNavigator(0)
         self.ad_hoc = AdHocFlow()
         self.one_shots: Dict[str, dict] = {}
+        self._pending_manual_switch: Optional[str] = None
+        self.transition: Optional[Dict] = None  # {"kind": "auto"|"manual", "started": monotonic}
         self._terminal_width = MIN_OUTER_WIDTH
 
     def compose(self) -> ComposeResult:
@@ -227,11 +230,17 @@ class MarqueeApp(App):
         try:
             with open(STATUS_FILE, 'r') as f:
                 status = json.load(f)
+            previous_stream = self.current_stream
             self.current_stream = status.get('current_stream')
             self.stream_alive = status.get('stream_alive', False)
             self.live_streams = status.get('live_streams', self.live_streams)
         except (json.JSONDecodeError, OSError):
-            pass
+            return
+        if (previous_stream is not None and self.current_stream is not None
+                and self.current_stream != previous_stream):
+            kind = "manual" if self._pending_manual_switch == self.current_stream else "auto"
+            self._pending_manual_switch = None
+            self.transition = {"kind": kind, "started": time.monotonic()}
 
     def _load_last_seen_file(self) -> None:
         if not LAST_SEEN_FILE.exists():
@@ -245,6 +254,28 @@ class MarqueeApp(App):
     def tick(self) -> None:
         self.refresh_data()
         self.render_frame()
+
+    def _transition_header_lines(self, width: int) -> Optional[List[str]]:
+        """Returns the 3 NOW WATCHING lines for an in-progress switch transition,
+        or None if no transition is active (caller falls back to render_header)."""
+        from rich.cells import set_cell_size
+
+        if self.transition is None:
+            return None
+        elapsed = time.monotonic() - self.transition["started"]
+        if elapsed >= TRANSITION_DURATION:
+            self.transition = None
+            return None
+        headline = (
+            "FOUND HIGHER PRIORITY STREAM" if self.transition["kind"] == "auto"
+            else "NEW STREAM SELECTED"
+        )
+        dots = "." * ((int(elapsed) % 3) + 1)
+        return [
+            set_cell_size(headline, width),
+            set_cell_size(f"SWITCHING NOW{dots}", width),
+            " " * width,
+        ]
 
     def _header_data(self) -> HeaderData:
         if not self.current_stream:
@@ -320,7 +351,9 @@ class MarqueeApp(App):
                 " " * header_inner,
             ]
         else:
-            header_lines = render_header(self._header_data(), header_inner)
+            header_lines = self._transition_header_lines(header_inner)
+            if header_lines is None:
+                header_lines = render_header(self._header_data(), header_inner)
         for text in header_lines:
             lines.append(self._styled_line(("║ │ ", B), (text, None), (" │ ║", B)))
         lines.append(Text("║ └" + "─" * header_box_width + "┘ ║", style=B))
@@ -371,6 +404,7 @@ class MarqueeApp(App):
         with open(CONTROL_FILE, 'w') as f:
             f.write(f"switch:{streamer}")
         self.ad_hoc_mode = None
+        self._pending_manual_switch = streamer
         self.render_frame()
 
     def action_ad_hoc_start(self) -> None:
@@ -496,6 +530,7 @@ class MarqueeApp(App):
         with open(CONTROL_FILE, 'w') as f:
             f.write(f"switch:{streamer}:{mode.value}")
         self.ad_hoc_mode = mode.value
+        self._pending_manual_switch = streamer
         self.render_frame()
 
     def spawn_one_shot(self, streamer: str) -> None:

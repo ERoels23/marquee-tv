@@ -225,11 +225,11 @@ class TwitchTVController:
 
     def show_notification(self, new_streamer: str, new_stream_info: Dict):
         """Show a desktop notification about upcoming stream switch"""
-        message = f"🔄 Switching to {new_streamer} in 10 minutes\n{new_stream_info['title']}\n(Close mpv to switch now)"
+        message = f"{new_streamer} went live! switching in 10 minutes"
 
         # Use notify-send for desktop notification
         subprocess.run(
-            ["notify-send", "-u", "normal", "-t", "0", "TwitchTV", message],
+            ["notify-send", "-u", "normal", "-t", "0", "Marquee.tv", message],
             capture_output=True
         )
 
