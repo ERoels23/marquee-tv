@@ -17,7 +17,8 @@ StandardError=journal
 Environment="DISPLAY=:0"
 Environment="XAUTHORITY=%h/.Xauthority"
 
-# Allow killing the player on stop
+# Only signal the daemon itself on stop; it tears down mpv + Chatterino in
+# its own shutdown handler (run()'s finally -> _teardown()).
 KillMode=process
 
 [Install]

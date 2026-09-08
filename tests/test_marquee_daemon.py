@@ -446,6 +446,42 @@ def test_stop_playback_tears_down_and_clears_state(monkeypatch):
     assert ["pkill", "-x", "chatterino"] in killed
 
 
+def test_teardown_terminates_player_kills_chatterino_and_unlinks_runtime_files(tmp_path, monkeypatch):
+    # run()'s finally -> _teardown() is the ONLY teardown path under a
+    # signal-driven SystemExit (marquee.sh stop / systemctl stop / UI
+    # quit-and-stop), so it must terminate the mpv/streamlink process and
+    # kill Chatterino — otherwise both are orphaned.
+    status_file = tmp_path / ".status.json"
+    control_file = tmp_path / ".control"
+    status_file.write_text("{}")
+    control_file.write_text("stop")
+    monkeypatch.setattr("marquee_daemon.STATUS_FILE", status_file)
+    monkeypatch.setattr("marquee_daemon.CONTROL_FILE", control_file)
+    killed = []
+    monkeypatch.setattr("marquee_daemon.subprocess.run",
+                        lambda cmd, **kw: killed.append(cmd) or mock.Mock(returncode=0))
+    proc = mock.Mock()
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    ctrl.current_process = proc
+
+    ctrl._teardown()
+
+    proc.terminate.assert_called_once()
+    assert ["pkill", "-x", "chatterino"] in killed
+    assert not status_file.exists()
+    assert not control_file.exists()
+
+
+def test_teardown_is_safe_with_no_running_process(tmp_path, monkeypatch):
+    monkeypatch.setattr("marquee_daemon.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_daemon.CONTROL_FILE", tmp_path / ".control")
+    monkeypatch.setattr("marquee_daemon.subprocess.run",
+                        lambda cmd, **kw: mock.Mock(returncode=0))
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    ctrl.current_process = None
+    ctrl._teardown()  # must not raise
+
+
 def test_apply_control_play_enables_playback():
     ctrl = TwitchTVController.__new__(TwitchTVController)
     ctrl.playback_enabled = False

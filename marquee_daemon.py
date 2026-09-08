@@ -556,143 +556,152 @@ class TwitchTVController:
         # nothing about actually watching a stream depends on it.
         threading.Thread(target=self.backfill_last_seen, daemon=True).start()
 
-        while self.running:
-            try:
-                self.maybe_reload_priority_list()
-                self._resolve_priority_list()
-                # Only query API every API_UPDATE_INTERVAL seconds
-                current_time = time.time()
-                if current_time - self.last_api_update >= API_UPDATE_INTERVAL:
-                    self.live_streams = self.get_live_streams()
-                    self.last_api_update = current_time
-                    now_iso = datetime.now(timezone.utc).isoformat()
-                    for streamer, info in self.live_streams.items():
-                        self.last_seen[streamer] = {
-                            "at": now_iso, "game": info.get('game'), "title": info.get('title'),
-                        }
-                    self._save_last_seen()
+        try:
+            while self.running:
+                try:
+                    self.maybe_reload_priority_list()
+                    self._resolve_priority_list()
+                    # Only query API every API_UPDATE_INTERVAL seconds
+                    current_time = time.time()
+                    if current_time - self.last_api_update >= API_UPDATE_INTERVAL:
+                        self.live_streams = self.get_live_streams()
+                        self.last_api_update = current_time
+                        now_iso = datetime.now(timezone.utc).isoformat()
+                        for streamer, info in self.live_streams.items():
+                            self.last_seen[streamer] = {
+                                "at": now_iso, "game": info.get('game'), "title": info.get('title'),
+                            }
+                        self._save_last_seen()
 
-                    if (self.current_stream and self.is_stream_alive()
-                            and self.current_stream in self.live_streams
-                            and self.current_socket_path):
-                        info = self.live_streams[self.current_stream]
-                        if info['game'] != self.last_known_game or info['title'] != self.last_known_title:
-                            new_title = build_mpv_title(self.current_stream, info['game'], info['title'])
-                            if set_title(self.current_socket_path, new_title):
-                                self.last_known_game = info['game']
-                                self.last_known_title = info['title']
-                            else:
-                                print(f"[{datetime.now().strftime('%H:%M:%S')}] Failed to push MPV title update, will retry next poll")
+                        if (self.current_stream and self.is_stream_alive()
+                                and self.current_stream in self.live_streams
+                                and self.current_socket_path):
+                            info = self.live_streams[self.current_stream]
+                            if info['game'] != self.last_known_game or info['title'] != self.last_known_title:
+                                new_title = build_mpv_title(self.current_stream, info['game'], info['title'])
+                                if set_title(self.current_socket_path, new_title):
+                                    self.last_known_game = info['game']
+                                    self.last_known_title = info['title']
+                                else:
+                                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Failed to push MPV title update, will retry next poll")
 
-                current_live = set(self.live_streams.keys())
-                newly_live = current_live - self.previous_live_streams
-                self.previous_live_streams = current_live
-                highest_priority = self.get_highest_priority_live(self.live_streams)
+                    current_live = set(self.live_streams.keys())
+                    newly_live = current_live - self.previous_live_streams
+                    self.previous_live_streams = current_live
+                    highest_priority = self.get_highest_priority_live(self.live_streams)
 
-                # ALWAYS check for manual switch requests (user can switch anytime,
-                # including before any stream has started — see below).
-                control_target, control_mode = None, None
-                control_signal = self.check_control_signal()
-                if control_signal is not None:
-                    target, mode = control_signal
-                    if target is None and mode in ("play", "stop"):
-                        self._apply_playback_token(mode)
-                    elif mode == "oneshot":
-                        pass  # UI handles one-shot streams entirely on its own
-                    elif target == "" and mode is None:
-                        # Legacy "switch" command - switch to highest priority now
-                        control_target, control_mode = highest_priority, None
-                    elif target and target in self.live_streams:
-                        self._clear_cooldown(target)
-                        control_target, control_mode = target, mode
+                    # ALWAYS check for manual switch requests (user can switch anytime,
+                    # including before any stream has started — see below).
+                    control_target, control_mode = None, None
+                    control_signal = self.check_control_signal()
+                    if control_signal is not None:
+                        target, mode = control_signal
+                        if target is None and mode in ("play", "stop"):
+                            self._apply_playback_token(mode)
+                        elif mode == "oneshot":
+                            pass  # UI handles one-shot streams entirely on its own
+                        elif target == "" and mode is None:
+                            # Legacy "switch" command - switch to highest priority now
+                            control_target, control_mode = highest_priority, None
+                        elif target and target in self.live_streams:
+                            self._clear_cooldown(target)
+                            control_target, control_mode = target, mode
 
-                # An explicit switch:<streamer> implies "play".
-                if control_target is not None:
-                    self.playback_enabled = True
+                    # An explicit switch:<streamer> implies "play".
+                    if control_target is not None:
+                        self.playback_enabled = True
 
-                if not self.playback_enabled:
-                    self.switching_soon = None
-                    self.grace_period_start = None
+                    if not self.playback_enabled:
+                        self.switching_soon = None
+                        self.grace_period_start = None
+                        self.save_status()
+                        time.sleep(CHECK_INTERVAL)
+                        continue
+
+                    # The current stream's process has exited: classify it as
+                    # stream-end (cooldown + prune) vs hand-close once, then
+                    # re-derive selection from the possibly-pruned live set.
+                    if (self.current_stream is not None and self.current_process is not None
+                            and not self.is_stream_alive() and not self._handled_current_death):
+                        self._handled_current_death = True
+                        self._handle_stream_death()
+                        highest_priority = self.get_highest_priority_live(self.live_streams)
+                        control_target = self._settle_after_death(control_target)
+
+                    # If no stream is currently running, launch the requested stream
+                    # if one was specified (even if it isn't the highest priority),
+                    # otherwise fall back to the highest priority one.
+                    if not self.is_stream_alive():
+                        launch_target = control_target or highest_priority
+                        if launch_target:
+                            print(f"User requested switch to {launch_target} (mode={control_mode})" if control_target
+                                  else f"[{datetime.now().strftime('%H:%M:%S')}] Launching highest priority stream")
+                            self.launch_stream(launch_target, self.live_streams[launch_target])
+                            self.manual_override = (control_mode == "override")
+                        else:
+                            print(f"[{datetime.now().strftime('%H:%M:%S')}] No live streams in priority list")
+                            self.manual_override = False
+                        self.switching_soon = None
+                        self.grace_period_start = None
+
+                    # If a stream is running, check for manual switches and higher priority streams
+                    elif self.is_stream_alive():
+                        if control_target:
+                            print(f"User requested switch to {control_target} (mode={control_mode})")
+                            self.launch_stream(control_target, self.live_streams[control_target])
+                            self.manual_override = (control_mode == "override")
+                            self.switching_soon = None
+                            self.grace_period_start = None
+
+                        # Check for auto-switch to higher priority stream (ONLY if it JUST came online)
+                        if self.manual_override:
+                            if highest_priority != self.current_stream and highest_priority is not None:
+                                print(f"[{datetime.now().strftime('%H:%M:%S')}] manual_override active; suppressing auto-switch to {highest_priority}")
+                        elif highest_priority != self.current_stream and highest_priority is not None:
+                            # Check if this higher-priority stream is NEWLY live (not
+                            # already live) or was just promoted by a @when boundary crossing.
+                            if highest_priority in newly_live or self._reorder_event:
+                                if self.switching_soon != highest_priority:
+                                    self.switching_soon = highest_priority
+                                    self.grace_period_start = datetime.now()
+                                    reason = ("reorder" if (self._reorder_event and highest_priority not in newly_live)
+                                              else "live")
+                                    self.show_notification(
+                                        highest_priority, self.live_streams[highest_priority], reason=reason
+                                    )
+
+                            # Check if grace period has elapsed
+                            if self.grace_period_start and self.switching_soon == highest_priority:
+                                elapsed = (datetime.now() - self.grace_period_start).total_seconds()
+                                if elapsed >= GRACE_PERIOD:
+                                    print(f"Grace period elapsed, switching to {highest_priority}")
+                                    self.launch_stream(highest_priority, self.live_streams[highest_priority])
+                                    self.switching_soon = None
+                                    self.grace_period_start = None
+                        else:
+                            # Current stream is highest priority or no higher priority streams live
+                            self.switching_soon = None
+                            self.grace_period_start = None
+
                     self.save_status()
                     time.sleep(CHECK_INTERVAL)
-                    continue
 
-                # The current stream's process has exited: classify it as
-                # stream-end (cooldown + prune) vs hand-close once, then
-                # re-derive selection from the possibly-pruned live set.
-                if (self.current_stream is not None and self.current_process is not None
-                        and not self.is_stream_alive() and not self._handled_current_death):
-                    self._handled_current_death = True
-                    self._handle_stream_death()
-                    highest_priority = self.get_highest_priority_live(self.live_streams)
-                    control_target = self._settle_after_death(control_target)
+                except KeyboardInterrupt:
+                    print("\nShutdown requested")
+                    self.running = False
+                except Exception as e:
+                    print(f"Error in main loop: {e}")
+                    time.sleep(CHECK_INTERVAL)
 
-                # If no stream is currently running, launch the requested stream
-                # if one was specified (even if it isn't the highest priority),
-                # otherwise fall back to the highest priority one.
-                if not self.is_stream_alive():
-                    launch_target = control_target or highest_priority
-                    if launch_target:
-                        print(f"User requested switch to {launch_target} (mode={control_mode})" if control_target
-                              else f"[{datetime.now().strftime('%H:%M:%S')}] Launching highest priority stream")
-                        self.launch_stream(launch_target, self.live_streams[launch_target])
-                        self.manual_override = (control_mode == "override")
-                    else:
-                        print(f"[{datetime.now().strftime('%H:%M:%S')}] No live streams in priority list")
-                        self.manual_override = False
-                    self.switching_soon = None
-                    self.grace_period_start = None
+        finally:
+            self._teardown()
 
-                # If a stream is running, check for manual switches and higher priority streams
-                elif self.is_stream_alive():
-                    if control_target:
-                        print(f"User requested switch to {control_target} (mode={control_mode})")
-                        self.launch_stream(control_target, self.live_streams[control_target])
-                        self.manual_override = (control_mode == "override")
-                        self.switching_soon = None
-                        self.grace_period_start = None
-
-                    # Check for auto-switch to higher priority stream (ONLY if it JUST came online)
-                    if self.manual_override:
-                        if highest_priority != self.current_stream and highest_priority is not None:
-                            print(f"[{datetime.now().strftime('%H:%M:%S')}] manual_override active; suppressing auto-switch to {highest_priority}")
-                    elif highest_priority != self.current_stream and highest_priority is not None:
-                        # Check if this higher-priority stream is NEWLY live (not
-                        # already live) or was just promoted by a @when boundary crossing.
-                        if highest_priority in newly_live or self._reorder_event:
-                            if self.switching_soon != highest_priority:
-                                self.switching_soon = highest_priority
-                                self.grace_period_start = datetime.now()
-                                reason = ("reorder" if (self._reorder_event and highest_priority not in newly_live)
-                                          else "live")
-                                self.show_notification(
-                                    highest_priority, self.live_streams[highest_priority], reason=reason
-                                )
-
-                        # Check if grace period has elapsed
-                        if self.grace_period_start and self.switching_soon == highest_priority:
-                            elapsed = (datetime.now() - self.grace_period_start).total_seconds()
-                            if elapsed >= GRACE_PERIOD:
-                                print(f"Grace period elapsed, switching to {highest_priority}")
-                                self.launch_stream(highest_priority, self.live_streams[highest_priority])
-                                self.switching_soon = None
-                                self.grace_period_start = None
-                    else:
-                        # Current stream is highest priority or no higher priority streams live
-                        self.switching_soon = None
-                        self.grace_period_start = None
-
-                self.save_status()
-                time.sleep(CHECK_INTERVAL)
-
-            except KeyboardInterrupt:
-                print("\nShutdown requested")
-                self.running = False
-            except Exception as e:
-                print(f"Error in main loop: {e}")
-                time.sleep(CHECK_INTERVAL)
-
-        # Cleanup
+    def _teardown(self) -> None:
+        """Shut down the player and companion chat window and remove the
+        runtime files. Runs from run()'s `finally`, so it still executes when
+        handle_signal raises SystemExit on SIGINT/SIGTERM (marquee.sh stop /
+        systemctl stop / the UI's quit-and-stop) — otherwise the mpv/
+        streamlink process and Chatterino would be orphaned."""
         if self.current_process:
             self.current_process.terminate()
         subprocess.run(["pkill", "-x", "chatterino"], capture_output=True)
