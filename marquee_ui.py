@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Marquee.tv Textual UI — interactive dashboard for managing Twitch streams."""
+import datetime
 import json
 import subprocess
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 from rich.cells import cell_len, set_cell_size
 from rich.text import Text
@@ -15,7 +16,7 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
-from priority_list import parse_streamers_file, StreamerEntry, TimeBlock, _in_window
+from priority_list import parse_streamers_file, StreamerEntry, TimeBlock
 from marquee_model import ListNavigator, AdHocFlow, AdHocFlowState, AdHocMode
 from marquee_render import (
     HeaderData, RowData, render_header, render_row_collapsed, render_row_expanded_detail,
@@ -227,7 +228,7 @@ class MarqueeApp(App):
         # matches whatever theme the user's terminal is configured with.
         self.theme = "ansi-dark"
         self.entries: List[StreamerEntry] = []
-        self.priority_entries: List = []
+        self.priority_entries: List[Union[StreamerEntry, TimeBlock]] = []
         self.live_streams: Dict[str, Dict] = {}
         self.last_seen: Dict[str, str] = {}
         self.current_stream: Optional[str] = None
@@ -278,7 +279,6 @@ class MarqueeApp(App):
         bracketed by synthetic separator entries; the top one carries a label
         (the active @when window, `⏱ default order` when none matches, or a
         `⚠ …` warning for a malformed block)."""
-        import datetime
         now = datetime.datetime.now().time()
         flat: List[StreamerEntry] = []
         for item in self.priority_entries:
@@ -287,7 +287,7 @@ class MarqueeApp(App):
                     top = StreamerEntry(username="", is_separator=True,
                                         block_label=f"⚠ {item.warning}", block_warning=True)
                 else:
-                    active = next((r for r in item.rules if _in_window(now, r.start, r.end)), None)
+                    active = item.active_rule(now)
                     lbl = (f"⏱ {active.start.strftime('%H:%M')}-{active.end.strftime('%H:%M')}"
                            if active else "⏱ default order")
                     top = StreamerEntry(username="", is_separator=True, block_label=lbl)
@@ -483,8 +483,8 @@ class MarqueeApp(App):
         for entry in self.entries:
             if entry.is_separator:
                 rows.append(RowData(name="", is_live=False, is_separator=True,
-                                    separator_label=getattr(entry, "block_label", None),
-                                    separator_warning=getattr(entry, "block_warning", False)))
+                                    separator_label=entry.block_label,
+                                    separator_warning=entry.block_warning))
                 continue
             info = self.live_streams.get(entry.username)
             is_live = info is not None

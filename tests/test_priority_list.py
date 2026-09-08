@@ -149,6 +149,19 @@ def test_timeblock_resolve_appends_omitted_members_in_default_order():
     assert [e.username for e in block.resolve(datetime.time(22, 0))] == ["c", "a", "b"]
 
 
+def test_active_rule_returns_rule_in_window_none_outside():
+    rule = TimeRule(datetime.time(20, 0), datetime.time(8, 0), ["b", "a"])
+    block = TimeBlock(members=_members("a", "b"), rules=[rule])
+    assert block.active_rule(datetime.time(23, 0)) is rule
+    assert block.active_rule(datetime.time(12, 0)) is None
+
+
+def test_active_rule_none_when_block_has_warning():
+    rule = TimeRule(datetime.time(20, 0), datetime.time(8, 0), ["b", "a"])
+    block = TimeBlock(members=_members("a", "b"), rules=[rule], warning="bad block")
+    assert block.active_rule(datetime.time(23, 0)) is None
+
+
 def test_timeblock_with_warning_always_returns_default_order():
     block = TimeBlock(
         members=_members("a", "b"),

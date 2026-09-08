@@ -12,10 +12,14 @@ import signal
 import sys
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List, Dict
+import datetime as _dt
+from typing import Optional, List, Dict, Union
 import threading
 
-from priority_list import parse_streamers_file, resolve_entries, usernames as pl_usernames
+from priority_list import (
+    parse_streamers_file, resolve_entries, usernames as pl_usernames,
+    StreamerEntry, TimeBlock,
+)
 from mpv_ipc import set_title
 from ui_format import build_mpv_title
 
@@ -83,7 +87,7 @@ class TwitchTVController:
         self.last_known_game: Optional[str] = None
         self.last_known_title: Optional[str] = None
         self.last_seen: Dict[str, Dict] = self._load_last_seen()
-        self.priority_entries: List = []
+        self.priority_entries: List[Union[StreamerEntry, TimeBlock]] = []
         self._prev_resolved_order: Optional[List[str]] = None
         self._reorder_event: bool = False
         self.load_priority_list()
@@ -113,7 +117,7 @@ class TwitchTVController:
 
         print(f"Loaded priority list from {STREAMERS_FILE.name}")
 
-    def _resolve_priority_list(self, now=None):
+    def _resolve_priority_list(self, now: Optional[_dt.time] = None):
         """Recompute self.priority_list from the parsed entries for `now`
         (default: current time). Sets self._reorder_event True when the resolved
         order changed since the last call (a time-window boundary was crossed)."""
@@ -136,6 +140,11 @@ class TwitchTVController:
             new_entries = parse_streamers_file(STREAMERS_FILE)
             if pl_usernames(resolve_entries(new_entries)):
                 self.priority_entries = new_entries
+                # Re-baseline: a manual edit is not a time-window crossing, so
+                # the next _resolve_priority_list() must not fire _reorder_event
+                # (which would start a "priority shifted" grace switch). Only a
+                # newly-live promotion should switch after an edit, as before.
+                self._prev_resolved_order = None
                 self._streamers_mtime = mtime
                 for item in new_entries:
                     warning = getattr(item, "warning", None)

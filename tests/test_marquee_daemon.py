@@ -3,7 +3,7 @@ import json
 from unittest import mock
 
 from marquee_daemon import parse_control_command, TwitchTVController
-from priority_list import StreamerEntry, TimeRule, TimeBlock
+from priority_list import StreamerEntry, TimeRule, TimeBlock, parse_streamers_file
 
 
 def test_resolve_priority_list_reorders_on_time(monkeypatch):
@@ -23,6 +23,34 @@ def test_resolve_priority_list_reorders_on_time(monkeypatch):
     assert ctrl._reorder_event is True
     ctrl._resolve_priority_list(_dt.time(23, 30))
     assert ctrl._reorder_event is False
+
+
+def test_reload_that_reorders_does_not_fire_reorder_event(tmp_path, monkeypatch):
+    # A manual streamers.txt edit is not a time-window crossing: even if the
+    # resolved order changes, _reorder_event must stay False so no "priority
+    # shifted" grace switch fires (only a newly-live promotion should switch
+    # after an edit, matching pre-Phase-3 behaviour).
+    import os
+
+    f = tmp_path / "streamers.txt"
+    f.write_text("a\nb\nc\n")
+    monkeypatch.setattr("marquee_daemon.STREAMERS_FILE", f)
+
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    ctrl.priority_entries = parse_streamers_file(f)
+    ctrl._prev_resolved_order = None
+    ctrl._reorder_event = False
+    ctrl._streamers_mtime = f.stat().st_mtime
+    ctrl._resolve_priority_list(_dt.time(12, 0))
+    assert ctrl.priority_list == ["a", "b", "c"]
+
+    f.write_text("c\nb\na\n")  # user reorders the file
+    os.utime(f, (f.stat().st_atime, f.stat().st_mtime + 10))
+    ctrl.maybe_reload_priority_list()
+    ctrl._resolve_priority_list(_dt.time(12, 0))
+
+    assert ctrl.priority_list == ["c", "b", "a"]  # new order took effect
+    assert ctrl._reorder_event is False           # but not treated as a crossing
 
 
 def test_show_notification_reason_reorder_message(monkeypatch):

@@ -189,12 +189,16 @@ class TimeBlock:
     rules: List[TimeRule] = field(default_factory=list)
     warning: Optional[str] = None         # set => rules are invalid, treat as a plain group
 
+    def active_rule(self, now: datetime.time) -> Optional[TimeRule]:
+        """The @when rule in force at `now`, or None (default order applies).
+        Always None when this block has a warning."""
+        if self.warning is not None:
+            return None
+        return next((r for r in self.rules if _in_window(now, r.start, r.end)), None)
+
     def resolve(self, now: datetime.time) -> List[StreamerEntry]:
-        if self.warning is None:
-            for rule in self.rules:
-                if _in_window(now, rule.start, rule.end):
-                    return _apply_order(self.members, rule.order)
-        return list(self.members)
+        rule = self.active_rule(now)
+        return _apply_order(self.members, rule.order) if rule else list(self.members)
 
 
 def _apply_order(members: List[StreamerEntry], order: List[str]) -> List[StreamerEntry]:

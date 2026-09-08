@@ -343,6 +343,17 @@ async def test_separator_line_renders_and_connects_to_box_border(tmp_path, monke
         assert separator_lines[0].plain.lstrip("║").lstrip().startswith("├")
 
 
+def _freeze_ui_clock(monkeypatch, hh, mm):
+    """Freeze marquee_ui's module-level datetime so _reresolve_entries resolves
+    against a fixed wall-clock time (block window tests must not depend on when
+    the suite runs — `_in_window` is [start, end))."""
+    import datetime as _dtmod
+    import types
+    fixed = _dtmod.datetime(2026, 1, 1, hh, mm)
+    frozen = types.SimpleNamespace(datetime=types.SimpleNamespace(now=lambda: fixed))
+    monkeypatch.setattr("marquee_ui.datetime", frozen)
+
+
 @pytest.mark.asyncio
 async def test_ui_renders_block_in_resolved_order_with_window_label(tmp_path, monkeypatch):
     streamers_file = tmp_path / "streamers.txt"
@@ -353,13 +364,14 @@ async def test_ui_renders_block_in_resolved_order_with_window_label(tmp_path, mo
     monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
     monkeypatch.setattr(MarqueeApp, "start_service", lambda self: None)
     monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: True)
+    _freeze_ui_clock(monkeypatch, 12, 0)  # inside the 00:00-23:59 window
 
     app = MarqueeApp()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         content = app.query_one("#frame").content.plain
         assert content.index("Bbb") < content.index("Aaa")
-        assert "00:00" in content
+        assert "⏱ 00:00-23:59" in content
 
 
 @pytest.mark.asyncio
