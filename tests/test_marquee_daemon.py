@@ -348,3 +348,41 @@ def test_settle_after_death_none_stays_none():
     ctrl = TwitchTVController.__new__(TwitchTVController)
     ctrl.live_streams = {"alpha": {}}
     assert ctrl._settle_after_death(None) is None
+
+
+def test_stop_playback_tears_down_and_clears_state(monkeypatch):
+    killed = []
+    monkeypatch.setattr("marquee_daemon.subprocess.run",
+                        lambda cmd, **kw: killed.append(cmd) or mock.Mock(returncode=0))
+    proc = mock.Mock()
+    proc.poll.return_value = None
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    ctrl.playback_enabled = True
+    ctrl.current_process = proc
+    ctrl.current_stream = "alpha"
+    ctrl.current_socket_path = None
+    ctrl.switching_soon = "beta"
+    ctrl.grace_period_start = "whatever"
+    ctrl.manual_override = True
+    ctrl._stop_playback()
+    assert ctrl.playback_enabled is False
+    assert ctrl.current_stream is None
+    assert ctrl.switching_soon is None
+    assert ctrl.grace_period_start is None
+    assert ctrl.manual_override is False
+    proc.terminate.assert_called_once()
+    assert ["pkill", "-x", "chatterino"] in killed
+
+
+def test_save_status_includes_playback_enabled(tmp_path, monkeypatch):
+    monkeypatch.setattr("marquee_daemon.STATUS_FILE", tmp_path / ".status.json")
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    ctrl.playback_enabled = False
+    ctrl.current_stream = None
+    ctrl.current_process = None
+    ctrl.switching_soon = None
+    ctrl.grace_period_start = None
+    ctrl.live_streams = {}
+    ctrl.save_status()
+    data = json.loads((tmp_path / ".status.json").read_text())
+    assert data["playback_enabled"] is False

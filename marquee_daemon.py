@@ -65,6 +65,7 @@ class TwitchTVController:
         self.grace_period_start: Optional[datetime] = None
         self.running = True
         self.manual_override: bool = False
+        self.playback_enabled: bool = False  # daemon boots in monitor-only mode
         self.previous_live_streams: set = set()  # Track what was live last check
         self.live_streams: Dict[str, Dict] = {}  # Cache of live streams
         self.last_api_update: float = 0  # Timestamp of last API call
@@ -399,6 +400,26 @@ class TwitchTVController:
         self.grace_period_start = None
         self.save_status()
 
+    def _stop_playback(self) -> None:
+        """Stop playing a stream but keep monitoring. Toggled by the `stop`
+        control token / the UI's (X)."""
+        self.playback_enabled = False
+        if self.current_process is not None:
+            try:
+                self.current_process.terminate()
+                self.current_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.current_process.kill()
+        subprocess.run(["pkill", "-x", "chatterino"], capture_output=True)
+        if self.current_socket_path is not None:
+            self.current_socket_path.unlink(missing_ok=True)
+            self.current_socket_path = None
+        self.current_process = None
+        self.current_stream = None
+        self.switching_soon = None
+        self.grace_period_start = None
+        self.manual_override = False
+
     def show_notification(self, new_streamer: str, new_stream_info: Dict):
         """Show a desktop notification about upcoming stream switch"""
         message = f"{new_streamer} went live! switching in 5 minutes"
@@ -462,6 +483,7 @@ class TwitchTVController:
             'switching_soon': self.switching_soon,
             'grace_period_remaining': None,
             'live_streams': self.live_streams,
+            'playback_enabled': self.playback_enabled,
         }
 
         if self.grace_period_start:
