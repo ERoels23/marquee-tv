@@ -16,25 +16,89 @@ class StreamerEntry:
         return self.nickname if self.nickname else self.username
 
 
-def parse_streamers_file(path: Path) -> List[StreamerEntry]:
-    entries: List[StreamerEntry] = []
+def _parse_streamer_line(line: str) -> StreamerEntry:
+    if "|" in line:
+        username, nickname = line.split("|", 1)
+        username = username.strip().lower()
+        nickname = nickname.strip() or None
+    else:
+        username = line.lower()
+        nickname = None
+    return StreamerEntry(username=username, nickname=nickname)
+
+
+_WHEN_RE = re.compile(r"^@when\s+(\S+)\s*-\s*(\S+)\s*:\s*(.+)$", re.IGNORECASE)
+
+
+def parse_streamers_file(path: Path) -> List[Union[StreamerEntry, TimeBlock]]:
+    entries: List[Union[StreamerEntry, TimeBlock]] = []
     with open(path, "r") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if line == "---":
-                entries.append(StreamerEntry(username="", is_separator=True))
-                continue
-            if "|" in line:
-                username, nickname = line.split("|", 1)
-                username = username.strip().lower()
-                nickname = nickname.strip() or None
-            else:
-                username = line.lower()
-                nickname = None
-            entries.append(StreamerEntry(username=username, nickname=nickname))
+        lines = [ln.rstrip("\n") for ln in f]
+    i = 0
+    while i < len(lines):
+        raw = lines[i].strip()
+        if not raw or raw.startswith("#"):
+            i += 1
+            continue
+        if raw == "---":
+            entries.append(StreamerEntry(username="", is_separator=True))
+            i += 1
+            continue
+        if raw.lower() == "@block":
+            block, i = _parse_block(lines, i + 1)
+            entries.append(block)
+            continue
+        entries.append(_parse_streamer_line(raw))
+        i += 1
     return entries
+
+
+def _parse_block(lines: List[str], i: int) -> tuple:
+    """Parse from the line after `@block` up to and including `@end`.
+    Returns (TimeBlock, index_after_end). Always returns a TimeBlock, with
+    .warning set if anything is malformed."""
+    members: List[StreamerEntry] = []
+    raw_rules: list = []  # (start_str, end_str, [names])
+    structural_warning: Optional[str] = None
+    n = len(lines)
+    while i < n:
+        raw = lines[i].strip()
+        i += 1
+        if not raw or raw.startswith("#"):
+            continue
+        low = raw.lower()
+        if low == "@end":
+            break
+        if low == "@block":
+            structural_warning = structural_warning or "nested @block is not allowed"
+            continue
+        if raw == "---":
+            structural_warning = structural_warning or "--- separators are not allowed inside a block"
+            continue
+        if low.startswith("@when"):
+            m = _WHEN_RE.match(raw)
+            if not m:
+                structural_warning = structural_warning or f"malformed @when line: {raw!r}"
+                continue
+            names = [x.strip().lower() for x in m.group(3).split(",") if x.strip()]
+            raw_rules.append((m.group(1), m.group(2), names))
+            continue
+        members.append(_parse_streamer_line(raw))
+    else:
+        structural_warning = structural_warning or "@block without a matching @end"
+
+    block = _build_block(members, raw_rules)
+    if structural_warning and block.warning is None:
+        block.warning = structural_warning
+    return block, i
+
+
+def _build_block(members, raw_rules) -> TimeBlock:
+    # Task 14 fills in validation. For now: build rules without validation.
+    rules = []
+    for start_str, end_str, names in raw_rules:
+        rules.append(TimeRule(_parse_hhmm(start_str), _parse_hhmm(end_str), names))
+    return TimeBlock(members=members, rules=rules)
 
 
 @dataclass

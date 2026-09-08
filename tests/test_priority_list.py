@@ -149,3 +149,46 @@ def test_timeblock_with_warning_always_returns_default_order():
         warning="overlapping windows",
     )
     assert [e.username for e in block.resolve(datetime.time(22, 0))] == ["a", "b"]
+
+
+def test_parse_valid_block(tmp_path):
+    f = tmp_path / "streamers.txt"
+    f.write_text(
+        "northernlion|NL\n"
+        "@block\n"
+        "jerma985|Jerma\n"
+        "cosmonaut_variety_hour|Cosmo\n"
+        "@when 20:00-08:00: cosmonaut_variety_hour, jerma985\n"
+        "@end\n"
+        "shaun_vids\n"
+    )
+    entries = parse_streamers_file(f)
+    assert len(entries) == 3
+    assert entries[0].username == "northernlion"
+    block = entries[1]
+    assert isinstance(block, TimeBlock)
+    assert block.warning is None
+    assert [m.username for m in block.members] == ["jerma985", "cosmonaut_variety_hour"]
+    assert block.members[0].nickname == "Jerma"
+    assert len(block.rules) == 1
+    assert block.rules[0].start == datetime.time(20, 0)
+    assert block.rules[0].end == datetime.time(8, 0)
+    assert block.rules[0].order == ["cosmonaut_variety_hour", "jerma985"]
+    assert entries[2].username == "shaun_vids"
+
+
+def test_parse_no_block_unchanged(tmp_path):
+    f = tmp_path / "streamers.txt"
+    f.write_text("a|A\n---\nb\n")
+    entries = parse_streamers_file(f)
+    assert [type(e).__name__ for e in entries] == ["StreamerEntry", "StreamerEntry", "StreamerEntry"]
+    assert usernames(entries) == ["a", "b"]
+
+
+def test_parse_block_allows_comments_and_blanks_inside(tmp_path):
+    f = tmp_path / "streamers.txt"
+    f.write_text(
+        "@block\n# the pair\na\n\nb\n@when 08:00-20:00: a, b\n@end\n"
+    )
+    block = parse_streamers_file(f)[0]
+    assert [m.username for m in block.members] == ["a", "b"]
