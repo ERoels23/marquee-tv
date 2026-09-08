@@ -4,7 +4,7 @@ import datetime
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Optional, Tuple, Union
 
 
 @dataclass
@@ -55,12 +55,12 @@ def parse_streamers_file(path: Path) -> List[Union[StreamerEntry, TimeBlock]]:
     return entries
 
 
-def _parse_block(lines: List[str], i: int) -> tuple:
+def _parse_block(lines: List[str], i: int) -> Tuple[TimeBlock, int]:
     """Parse from the line after `@block` up to and including `@end`.
     Returns (TimeBlock, index_after_end). Always returns a TimeBlock, with
     .warning set if anything is malformed."""
     members: List[StreamerEntry] = []
-    raw_rules: list = []  # (start_str, end_str, [names])
+    raw_rules: List[Tuple[str, str, List[str]]] = []
     structural_warning: Optional[str] = None
     n = len(lines)
     while i < n:
@@ -85,69 +85,93 @@ def _parse_block(lines: List[str], i: int) -> tuple:
             names = [x.strip().lower() for x in m.group(3).split(",") if x.strip()]
             raw_rules.append((m.group(1), m.group(2), names))
             continue
+        if raw.startswith("@"):
+            structural_warning = structural_warning or f"unrecognized directive: {raw!r}"
+            continue
         members.append(_parse_streamer_line(raw))
     else:
+        # for/else: exhausted the lines without hitting `@end`
         structural_warning = structural_warning or "@block without a matching @end"
 
-    block = _build_block(members, raw_rules, structural_warning)
-    return block, i
+    return _build_block(members, raw_rules, structural_warning), i
 
 
-def _build_block(
-    members: List[StreamerEntry],
-    raw_rules: list,
-    structural_warning: Optional[str] = None,
-) -> TimeBlock:
-    member_names = {m.username for m in members}
-    warning = None
-    parsed_rules: List[TimeRule] = []
-
-    def warn(msg):
-        nonlocal warning
-        if msg:
-            warning = warning or msg
-
-    coverage = [0] * (24 * 60)
+def _parse_rules(
+    raw_rules: List[Tuple[str, str, List[str]]],
+    member_names: set,
+) -> Tuple[List[TimeRule], List[str]]:
+    """Parse raw (start, end, names) tuples into TimeRules.
+    Returns (rules, warnings); `warnings` are rule-content problems in the
+    order encountered (the first is the one that surfaces to the user)."""
+    rules: List[TimeRule] = []
+    warnings: List[str] = []
     for start_str, end_str, names in raw_rules:
         s, e = _parse_hhmm(start_str), _parse_hhmm(end_str)
         if s is None:
-            warn(f"invalid time {start_str!r} (expected HH:MM, 00:00-23:59)")
+            warnings.append(f"invalid time {start_str!r} (expected HH:MM, 00:00-23:59)")
             continue
         if e is None:
-            warn(f"invalid time {end_str!r} (expected HH:MM, 00:00-23:59)")
+            warnings.append(f"invalid time {end_str!r} (expected HH:MM, 00:00-23:59)")
             continue
         if s == e:
-            warn(f"window {start_str}-{end_str} is zero-length; omit @when for all-day")
+            warnings.append(f"window {start_str}-{end_str} is zero-length; omit @when for all-day")
+            continue
+        if not names:
+            warnings.append(f"@when {start_str}-{end_str} names no streamers")
             continue
         if len(set(names)) != len(names):
-            warn(f"@when {start_str}-{end_str} lists a streamer twice")
+            warnings.append(f"@when {start_str}-{end_str} lists a streamer twice")
         unknown = [x for x in names if x not in member_names]
         if unknown:
-            warn(f"@when {start_str}-{end_str} names non-member streamer(s): {', '.join(unknown)}")
-        s_min, e_min = s.hour * 60 + s.minute, e.hour * 60 + e.minute
+            warnings.append(
+                f"@when {start_str}-{end_str} names non-member streamer(s): {', '.join(unknown)}"
+            )
+        rules.append(TimeRule(s, e, names))
+    return rules, warnings
+
+
+def _windows_overlap(rules: List[TimeRule]) -> bool:
+    """True if any two rule windows cover the same minute of day. Marks a
+    1440-entry minute-of-day array, midnight-wrap aware. This is the same
+    [start, end) predicate as `_in_window` — keep the two in sync."""
+    coverage = [0] * (24 * 60)
+    for rule in rules:
+        s_min = rule.start.hour * 60 + rule.start.minute
+        e_min = rule.end.hour * 60 + rule.end.minute
         minutes = range(s_min, e_min) if s_min < e_min else \
             [m % 1440 for m in range(s_min, e_min + 1440)]
         for m in minutes:
             coverage[m] += 1
-        parsed_rules.append(TimeRule(s, e, names))
+    return any(c > 1 for c in coverage)
 
-    if any(c > 1 for c in coverage):
-        warn("@when windows overlap")
 
-    # Priority: rule-content problems (above) > structural problems > emptiness,
-    # so a typo'd @when reports the typo rather than "block has no @when rules".
-    warn(structural_warning)
+def _build_block(
+    members: List[StreamerEntry],
+    raw_rules: List[Tuple[str, str, List[str]]],
+    structural_warning: Optional[str] = None,
+) -> TimeBlock:
+    """Assemble a TimeBlock, choosing at most one warning by priority tier:
+    rule-content problems > structural problems > emptiness."""
+    member_names = {m.username for m in members}
+    rules, rule_warnings = _parse_rules(raw_rules, member_names)
+    if _windows_overlap(rules):
+        rule_warnings.append("@when windows overlap")
 
+    structural = [structural_warning] if structural_warning else []
+    empty: List[str] = []
     if not members:
-        warn("block has no member streamers")
+        empty.append("block has no member streamers")
     if not raw_rules:
-        warn("block has no @when rules")
+        empty.append("block has no @when rules")
 
-    block = TimeBlock(members=members, rules=parsed_rules, warning=warning)
+    warning = next(
+        (w for tier in (rule_warnings, structural, empty) for w in tier),
+        None,
+    )
     if warning:
         who = ", ".join(m.username for m in members) or "(no members)"
-        block.warning = f"block ({who}): {warning}"
-    return block
+        warning = f"block ({who}): {warning}"
+    return TimeBlock(members=members, rules=rules, warning=warning)
 
 
 @dataclass
@@ -200,7 +224,10 @@ def _in_window(t: datetime.time, start: datetime.time, end: datetime.time) -> bo
     return t >= start or t < end
 
 
-def resolve_entries(entries, now: Optional[datetime.time] = None) -> List[StreamerEntry]:
+def resolve_entries(
+    entries: List[Union[StreamerEntry, TimeBlock]],
+    now: Optional[datetime.time] = None,
+) -> List[StreamerEntry]:
     """Flatten a parsed priority list to a plain ordered list of StreamerEntry,
     expanding each TimeBlock into its effective order for `now`
     (default: the current wall-clock time). Separators are preserved."""

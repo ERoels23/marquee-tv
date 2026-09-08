@@ -1,4 +1,18 @@
-from priority_list import parse_streamers_file, usernames
+import datetime
+
+import pytest
+
+from priority_list import (
+    StreamerEntry,
+    TimeBlock,
+    TimeRule,
+    _in_window,
+    _parse_block,
+    _parse_hhmm,
+    parse_streamers_file,
+    resolve_entries,
+    usernames,
+)
 
 
 def test_parse_basic(tmp_path):
@@ -86,10 +100,6 @@ def test_separator_with_surrounding_whitespace(tmp_path):
 # Phase 3: time-based priority rules
 # ---------------------------------------------------------------------------
 
-import datetime
-import pytest
-from priority_list import _parse_hhmm, _in_window
-
 
 def test_parse_hhmm_valid():
     assert _parse_hhmm("08:00") == datetime.time(8, 0)
@@ -116,9 +126,6 @@ def test_in_window_wraps_midnight():
     assert _in_window(datetime.time(3, 0), s, e) is True
     assert _in_window(datetime.time(8, 0), s, e) is False
     assert _in_window(datetime.time(12, 0), s, e) is False
-
-
-from priority_list import StreamerEntry, TimeRule, TimeBlock
 
 
 def _members(*names):
@@ -195,7 +202,6 @@ def test_parse_block_allows_comments_and_blanks_inside(tmp_path):
 
 
 def _block(text):
-    from priority_list import _parse_block
     return _parse_block(("@block\n" + text + "@end\n").split("\n"), 1)[0]
 
 
@@ -208,7 +214,7 @@ def test_block_invalid_time_warns_and_keeps_members():
 
 def test_block_zero_length_window_warns():
     b = _block("a\nb\n@when 08:00-08:00: a, b\n")
-    assert b.warning is not None
+    assert b.warning is not None and "zero-length" in b.warning
 
 
 def test_block_overlapping_windows_warn():
@@ -228,7 +234,7 @@ def test_block_unknown_member_name_warns():
 
 def test_block_duplicate_name_in_when_warns():
     b = _block("a\nb\n@when 08:00-20:00: a, a\n")
-    assert b.warning is not None
+    assert b.warning is not None and "twice" in b.warning
 
 
 def test_block_no_when_rules_warns():
@@ -237,11 +243,29 @@ def test_block_no_when_rules_warns():
 
 
 def test_block_no_members_warns():
-    b = _block("@when 08:00-20:00: a\n")
-    assert b.warning is not None
+    b = _block("")
+    assert b.warning is not None and "no member streamers" in b.warning
 
 
-from priority_list import resolve_entries
+def test_block_when_names_zero_streamers_warns():
+    b = _block("a\nb\n@when 08:00-20:00: ,,,\n")
+    assert b.warning is not None and "names no streamers" in b.warning
+
+
+def test_block_nested_block_warns():
+    b = _block("a\nb\n@block\n@when 08:00-20:00: a, b\n")
+    assert b.warning is not None and "nested" in b.warning
+
+
+def test_block_separator_inside_warns():
+    b = _block("a\nb\n---\n@when 08:00-20:00: a, b\n")
+    assert b.warning is not None and "separator" in b.warning.lower()
+
+
+def test_block_unrecognized_directive_warns_not_streamer():
+    b = _block("a\n@bogus\nb\n@when 08:00-20:00: a, b\n")
+    assert b.warning is not None and "unrecognized directive" in b.warning
+    assert [m.username for m in b.members] == ["a", "b"]
 
 
 def test_resolve_entries_flattens_block_by_time(tmp_path):
@@ -264,6 +288,17 @@ def test_resolve_entries_no_block_is_identity(tmp_path):
     assert usernames(out) == ["a", "b"]
 
 
+def test_resolve_entries_defaults_to_current_time(tmp_path):
+    f = tmp_path / "streamers.txt"
+    f.write_text(
+        "top\n@block\na\nb\n@when 20:00-08:00: b, a\n@end\nbottom\n"
+    )
+    entries = parse_streamers_file(f)
+    out = resolve_entries(entries)  # no `now` -> current wall clock, must not raise
+    assert len(out) == 4
+    assert set(usernames(out)) == {"top", "a", "b", "bottom"}
+
+
 def test_usernames_still_accepts_flat_list(tmp_path):
     f = tmp_path / "streamers.txt"
     f.write_text("a\nb\n")
@@ -279,7 +314,6 @@ def test_block_malformed_when_reports_typo_not_missing_rules():
 
 
 def test_block_missing_end_carries_block_prefix():
-    from priority_list import _parse_block
     b = _parse_block(["@block", "a", "b"], 1)[0]
     assert b.warning is not None
     assert b.warning.startswith("block (a, b):")
@@ -288,7 +322,6 @@ def test_block_missing_end_carries_block_prefix():
 
 
 def test_block_structurally_broken_and_bad_rules_keeps_rule_warning():
-    from priority_list import _parse_block
     lines = [
         "@block", "a", "b",
         "@when 08:00-21:00: a, b",
