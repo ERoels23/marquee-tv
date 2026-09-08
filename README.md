@@ -75,6 +75,45 @@ order you want to watch them. Append `|Nickname` after a username to give it
 a display name in the UI (the underlying Twitch login is still used for API
 calls and launching — only the display changes).
 
+A line of just `---` draws a divider in the priority list (purely visual;
+it's skipped by navigation and ignored by the daemon).
+
+#### Time-based priority (`@block`)
+
+A `@block` … `@end` group lets a set of streamers swap priority order
+depending on the time of day:
+
+```
+@block
+jerma985|Jerma
+cosmonaut_variety_hour|Cosmonaut
+@when 20:00-08:00: cosmonaut_variety_hour, jerma985
+@end
+```
+
+- Between `@block` and `@end`, member lines use the normal syntax
+  (`username` or `username|Nickname`); their file order is the **default**
+  priority order.
+- `@when HH:MM-HH:MM: name, name` overrides the order during that
+  wall-clock window. 24-hour clock, **start inclusive / end exclusive**, and
+  it may wrap past midnight (`20:00-08:00`). Outside every window the block
+  falls back to default order.
+- Multiple `@when` lines are allowed but their windows **must not overlap**
+  (touching endpoints like `…-20:00` and `20:00-…` are fine — end is
+  exclusive).
+- A member left out of the matching `@when` is appended after the listed
+  ones, in default order.
+- `#` comments and blank lines are allowed inside a block; `---` separators
+  are not.
+- If a block is malformed (bad time, overlapping windows, unknown member
+  name, missing `@end`, …) its timing is discarded and the members are used
+  in plain default order — **no streamer is ever dropped over a typo** — and
+  the UI shows a yellow `⚠` warning line where the block sits.
+- Crossing a `@when` boundary while you're watching is treated exactly like
+  a higher-priority stream coming online: a desktop notification and the
+  normal 5-minute grace period before the switch. Steady state never yanks
+  you mid-session.
+
 ### 2. Authenticate with Twitch CLI
 
 The daemon and UI use the Twitch CLI to check which of your followed
