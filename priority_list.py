@@ -93,12 +93,52 @@ def _parse_block(lines: List[str], i: int) -> tuple:
     return block, i
 
 
-def _build_block(members, raw_rules) -> TimeBlock:
-    # Task 14 fills in validation. For now: build rules without validation.
-    rules = []
+def _build_block(members: List[StreamerEntry], raw_rules: list) -> TimeBlock:
+    member_names = {m.username for m in members}
+    warning = None
+    parsed_rules: List[TimeRule] = []
+
+    def warn(msg):
+        nonlocal warning
+        warning = warning or msg
+
+    if not members:
+        warn("block has no member streamers")
+    if not raw_rules:
+        warn("block has no @when rules")
+
+    coverage = [0] * (24 * 60)
     for start_str, end_str, names in raw_rules:
-        rules.append(TimeRule(_parse_hhmm(start_str), _parse_hhmm(end_str), names))
-    return TimeBlock(members=members, rules=rules)
+        s, e = _parse_hhmm(start_str), _parse_hhmm(end_str)
+        if s is None:
+            warn(f"invalid time {start_str!r} (expected HH:MM, 00:00-23:59)")
+            continue
+        if e is None:
+            warn(f"invalid time {end_str!r} (expected HH:MM, 00:00-23:59)")
+            continue
+        if s == e:
+            warn(f"window {start_str}-{end_str} is zero-length; omit @when for all-day")
+            continue
+        if len(set(names)) != len(names):
+            warn(f"@when {start_str}-{end_str} lists a streamer twice")
+        unknown = [x for x in names if x not in member_names]
+        if unknown:
+            warn(f"@when {start_str}-{end_str} names non-member streamer(s): {', '.join(unknown)}")
+        s_min, e_min = s.hour * 60 + s.minute, e.hour * 60 + e.minute
+        minutes = range(s_min, e_min) if s_min < e_min else \
+            [m % 1440 for m in range(s_min, e_min + 1440)]
+        for m in minutes:
+            coverage[m] += 1
+        parsed_rules.append(TimeRule(s, e, names))
+
+    if any(c > 1 for c in coverage):
+        warn("@when windows overlap")
+
+    block = TimeBlock(members=members, rules=parsed_rules, warning=warning)
+    if warning:
+        who = ", ".join(m.username for m in members) or "(no members)"
+        block.warning = f"block ({who}): {warning}"
+    return block
 
 
 @dataclass

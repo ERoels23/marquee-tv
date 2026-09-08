@@ -192,3 +192,50 @@ def test_parse_block_allows_comments_and_blanks_inside(tmp_path):
     )
     block = parse_streamers_file(f)[0]
     assert [m.username for m in block.members] == ["a", "b"]
+
+
+def _block(text):
+    from priority_list import _parse_block
+    return _parse_block(("@block\n" + text + "@end\n").split("\n"), 1)[0]
+
+
+def test_block_invalid_time_warns_and_keeps_members():
+    b = _block("a\nb\n@when 25:00-08:00: a, b\n")
+    assert b.warning is not None and "25:00" in b.warning
+    assert [m.username for m in b.members] == ["a", "b"]
+    assert [e.username for e in b.resolve(datetime.time(2, 0))] == ["a", "b"]
+
+
+def test_block_zero_length_window_warns():
+    b = _block("a\nb\n@when 08:00-08:00: a, b\n")
+    assert b.warning is not None
+
+
+def test_block_overlapping_windows_warn():
+    b = _block("a\nb\n@when 08:00-21:00: a, b\n@when 20:00-08:00: b, a\n")
+    assert b.warning is not None and "overlap" in b.warning.lower()
+
+
+def test_block_touching_windows_are_ok():
+    b = _block("a\nb\n@when 08:00-20:00: a, b\n@when 20:00-08:00: b, a\n")
+    assert b.warning is None
+
+
+def test_block_unknown_member_name_warns():
+    b = _block("a\nb\n@when 08:00-20:00: a, zzz\n")
+    assert b.warning is not None and "zzz" in b.warning
+
+
+def test_block_duplicate_name_in_when_warns():
+    b = _block("a\nb\n@when 08:00-20:00: a, a\n")
+    assert b.warning is not None
+
+
+def test_block_no_when_rules_warns():
+    b = _block("a\nb\n")
+    assert b.warning is not None and "no @when" in b.warning.lower()
+
+
+def test_block_no_members_warns():
+    b = _block("@when 08:00-20:00: a\n")
+    assert b.warning is not None
