@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict
 import threading
 
-from priority_list import parse_streamers_file, usernames as pl_usernames
+from priority_list import parse_streamers_file, resolve_entries, usernames as pl_usernames
 from mpv_ipc import set_title
 from ui_format import build_mpv_title
 
@@ -83,24 +83,48 @@ class TwitchTVController:
         self.last_known_game: Optional[str] = None
         self.last_known_title: Optional[str] = None
         self.last_seen: Dict[str, Dict] = self._load_last_seen()
+        self.priority_entries: List = []
+        self._prev_resolved_order: Optional[List[str]] = None
+        self._reorder_event: bool = False
         self.load_priority_list()
+        self._resolve_priority_list()
         self._streamers_mtime = STREAMERS_FILE.stat().st_mtime
 
     def load_priority_list(self):
-        """Load and validate streamers priority list"""
+        """Load and validate streamers priority list into self.priority_entries.
+
+        Does NOT set self.priority_list — that's derived per-tick from the
+        current time by _resolve_priority_list().
+        """
         if not STREAMERS_FILE.exists():
             print(f"ERROR: {STREAMERS_FILE} not found!")
             print("Please create streamers.txt with one streamer per line")
             sys.exit(1)
 
-        entries = parse_streamers_file(STREAMERS_FILE)
-        self.priority_list = pl_usernames(entries)
+        self.priority_entries = parse_streamers_file(STREAMERS_FILE)
+        for item in self.priority_entries:
+            warning = getattr(item, "warning", None)
+            if warning:
+                print(f"[streamers.txt] WARNING: {warning}")
 
-        if not self.priority_list:
-            print("ERROR: streamers.txt is empty!")
+        if not pl_usernames(resolve_entries(self.priority_entries)):
+            print("ERROR: streamers.txt has no streamers!")
             sys.exit(1)
 
-        print(f"Loaded {len(self.priority_list)} streamers from priority list")
+        print(f"Loaded priority list from {STREAMERS_FILE.name}")
+
+    def _resolve_priority_list(self, now=None):
+        """Recompute self.priority_list from the parsed entries for `now`
+        (default: current time). Sets self._reorder_event True when the resolved
+        order changed since the last call (a time-window boundary was crossed)."""
+        if now is None:
+            now = datetime.now().time()
+        resolved = pl_usernames(resolve_entries(self.priority_entries, now))
+        self._reorder_event = (
+            self._prev_resolved_order is not None and resolved != self._prev_resolved_order
+        )
+        self._prev_resolved_order = resolved
+        self.priority_list = resolved
 
     def maybe_reload_priority_list(self):
         """Reload streamers.txt if it changed on disk since the last check."""
@@ -109,12 +133,15 @@ class TwitchTVController:
         except FileNotFoundError:
             return
         if mtime != self._streamers_mtime:
-            entries = parse_streamers_file(STREAMERS_FILE)
-            new_list = pl_usernames(entries)
-            if new_list:
-                self.priority_list = new_list
+            new_entries = parse_streamers_file(STREAMERS_FILE)
+            if pl_usernames(resolve_entries(new_entries)):
+                self.priority_entries = new_entries
                 self._streamers_mtime = mtime
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Reloaded priority list ({len(new_list)} streamers)")
+                for item in new_entries:
+                    warning = getattr(item, "warning", None)
+                    if warning:
+                        print(f"[streamers.txt] WARNING: {warning}")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Reloaded priority list")
 
     def get_live_streams(self) -> Dict[str, Dict]:
         """
@@ -435,22 +462,24 @@ class TwitchTVController:
         elif token == "stop":
             self._stop_playback()
 
-    def show_notification(self, new_streamer: str, new_stream_info: Dict):
-        """Show a desktop notification about upcoming stream switch"""
-        message = f"{new_streamer} went live! switching in 5 minutes"
+    def show_notification(self, new_streamer: str, new_stream_info: Dict, reason: str = "live"):
+        """Desktop notification about an upcoming switch. `reason` is "live"
+        (the stream just came online) or "reorder" (a time rule just promoted
+        it above what's playing)."""
+        if reason == "reorder":
+            message = f"priority shifted — {new_streamer} now takes precedence, switching in 5 minutes"
+        else:
+            message = f"{new_streamer} went live! switching in 5 minutes"
 
-        # Use notify-send for desktop notification
         subprocess.run(
             ["notify-send", "-u", "normal", "-t", "0", "Marquee.tv", message],
-            capture_output=True
+            capture_output=True,
         )
-
         print(f"\n{'!'*60}")
-        print(f"STREAM AVAILABLE: {new_streamer}")
+        print(f"UPCOMING SWITCH: {new_streamer} ({reason})")
         print(f"Title: {new_stream_info['title']}")
         print(f"Game:  {new_stream_info['game']}")
-        print(f"Will auto-switch in 5 minutes")
-        print(f"(Or close mpv to switch now)")
+        print(f"Will auto-switch in 5 minutes (or close mpv to switch now)")
         print(f"{'!'*60}\n")
 
     def check_control_signal(self):
@@ -521,6 +550,7 @@ class TwitchTVController:
         while self.running:
             try:
                 self.maybe_reload_priority_list()
+                self._resolve_priority_list()
                 # Only query API every API_UPDATE_INTERVAL seconds
                 current_time = time.time()
                 if current_time - self.last_api_update >= API_UPDATE_INTERVAL:
@@ -618,13 +648,17 @@ class TwitchTVController:
                         if highest_priority != self.current_stream and highest_priority is not None:
                             print(f"[{datetime.now().strftime('%H:%M:%S')}] manual_override active; suppressing auto-switch to {highest_priority}")
                     elif highest_priority != self.current_stream and highest_priority is not None:
-                        # Check if this higher-priority stream is NEWLY live (not already live)
-                        if highest_priority in newly_live:
-                            # This stream just went live while we're watching something lower-priority
+                        # Check if this higher-priority stream is NEWLY live (not
+                        # already live) or was just promoted by a @when boundary crossing.
+                        if highest_priority in newly_live or self._reorder_event:
                             if self.switching_soon != highest_priority:
                                 self.switching_soon = highest_priority
                                 self.grace_period_start = datetime.now()
-                                self.show_notification(highest_priority, self.live_streams[highest_priority])
+                                reason = ("reorder" if (self._reorder_event and highest_priority not in newly_live)
+                                          else "live")
+                                self.show_notification(
+                                    highest_priority, self.live_streams[highest_priority], reason=reason
+                                )
 
                         # Check if grace period has elapsed
                         if self.grace_period_start and self.switching_soon == highest_priority:

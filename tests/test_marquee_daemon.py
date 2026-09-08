@@ -1,7 +1,47 @@
+import datetime as _dt
 import json
 from unittest import mock
 
 from marquee_daemon import parse_control_command, TwitchTVController
+from priority_list import StreamerEntry, TimeRule, TimeBlock
+
+
+def test_resolve_priority_list_reorders_on_time(monkeypatch):
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    ctrl.priority_entries = [
+        StreamerEntry(username="top"),
+        TimeBlock(members=[StreamerEntry(username="a"), StreamerEntry(username="b")],
+                  rules=[TimeRule(_dt.time(20, 0), _dt.time(8, 0), ["b", "a"])]),
+    ]
+    ctrl._prev_resolved_order = None
+    ctrl._reorder_event = False
+    ctrl._resolve_priority_list(_dt.time(12, 0))
+    assert ctrl.priority_list == ["top", "a", "b"]
+    assert ctrl._reorder_event is False
+    ctrl._resolve_priority_list(_dt.time(23, 0))
+    assert ctrl.priority_list == ["top", "b", "a"]
+    assert ctrl._reorder_event is True
+    ctrl._resolve_priority_list(_dt.time(23, 30))
+    assert ctrl._reorder_event is False
+
+
+def test_show_notification_reason_reorder_message(monkeypatch):
+    sent = {}
+    monkeypatch.setattr("marquee_daemon.subprocess.run",
+                        lambda cmd, **kw: sent.update(msg=cmd[-1]) or mock.Mock())
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    ctrl.show_notification("beta", {"title": "t", "game": "g"}, reason="reorder")
+    assert "priority" in sent["msg"].lower()
+    assert "beta" in sent["msg"]
+
+
+def test_show_notification_default_reason_is_live(monkeypatch):
+    sent = {}
+    monkeypatch.setattr("marquee_daemon.subprocess.run",
+                        lambda cmd, **kw: sent.update(msg=cmd[-1]) or mock.Mock())
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    ctrl.show_notification("beta", {"title": "t", "game": "g"})
+    assert "live" in sent["msg"].lower()
 
 
 def test_get_live_streams_queries_by_user_login_not_followed(monkeypatch):
