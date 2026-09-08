@@ -73,6 +73,16 @@ case "${1:-ui}" in
         echo "Signaled to switch immediately"
         ;;
 
+    play)
+        echo "play" > "$CONTROL_FILE"
+        echo "Signaled daemon to start playback"
+        ;;
+
+    stop-playback)
+        echo "stop" > "$CONTROL_FILE"
+        echo "Signaled daemon to stop playback (daemon keeps monitoring)"
+        ;;
+
     watch)
         echo "Running TwitchTV in foreground (Ctrl+C to stop)..."
         exec "$PYTHON" "$MAIN_SCRIPT"
@@ -94,8 +104,10 @@ Usage: switchtv [command]
 
 Commands:
   (none)     Launch interactive TUI
-  start      Start TwitchTV in background
-  stop       Stop TwitchTV
+  start      Start the daemon (monitors the priority list; does not auto-play)
+  stop       Stop the daemon entirely
+  play           Start playing the highest-priority stream (daemon keeps running)
+  stop-playback  Stop playing, but keep the daemon monitoring
   status     Show current stream status
   now        Switch to next stream NOW (don't wait for grace period)
   watch      Run TwitchTV in foreground (for debugging)
