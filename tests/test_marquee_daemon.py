@@ -206,6 +206,18 @@ def test_parse_is_case_insensitive():
     assert parse_control_command("SWITCH:Jerma985:OVERRIDE") == ("jerma985", "override")
 
 
+def test_parse_play_token():
+    assert parse_control_command("play") == (None, "play")
+
+
+def test_parse_stop_token():
+    assert parse_control_command("stop") == (None, "stop")
+
+
+def test_parse_play_is_case_insensitive():
+    assert parse_control_command("  PLAY \n") == (None, "play")
+
+
 def test_query_single_live_returns_info_when_live(monkeypatch):
     def fake_run(cmd, **kwargs):
         assert "user_login=alpha" in cmd

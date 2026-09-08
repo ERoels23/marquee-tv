@@ -45,6 +45,8 @@ def parse_control_command(raw: str):
     raw = raw.strip().lower()
     if raw == "switch":
         return ("", None)
+    if raw in ("play", "stop"):
+        return (None, raw)
     if raw.startswith("switch:"):
         rest = raw.split(":", 1)[1]
         if ":" in rest:
