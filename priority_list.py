@@ -242,5 +242,18 @@ def resolve_entries(
     return out
 
 
-def usernames(entries: List[StreamerEntry]) -> List[str]:
-    return [e.username for e in entries if not e.is_separator]
+def usernames(entries) -> List[str]:
+    """Flat list of usernames in priority order, skipping separators.
+
+    Tolerates an unflattened list (one still containing `TimeBlock`s): a
+    block's members are included in default order, so a caller that forgets
+    to `resolve_entries()` first degrades to default order rather than
+    raising `AttributeError`.
+    """
+    out: List[str] = []
+    for e in entries:
+        if isinstance(e, TimeBlock):
+            out.extend(m.username for m in e.members)
+        elif not e.is_separator:
+            out.append(e.username)
+    return out

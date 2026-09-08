@@ -321,6 +321,13 @@ def test_block_missing_end_carries_block_prefix():
     assert [m.username for m in b.members] == ["a", "b"]
 
 
+def test_usernames_tolerates_unflattened_timeblock(tmp_path):
+    f = tmp_path / "s.txt"
+    f.write_text("top\n@block\na\nb\n@when 20:00-08:00: b, a\n@end\nbottom\n")
+    entries = parse_streamers_file(f)
+    assert usernames(entries) == ["top", "a", "b", "bottom"]  # default order, no crash
+
+
 def test_block_structurally_broken_and_bad_rules_keeps_rule_warning():
     lines = [
         "@block", "a", "b",
