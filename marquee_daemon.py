@@ -66,6 +66,7 @@ class TwitchTVController:
         self.previous_live_streams: set = set()  # Track what was live last check
         self.live_streams: Dict[str, Dict] = {}  # Cache of live streams
         self.last_api_update: float = 0  # Timestamp of last API call
+        self.cooldowns: Dict[str, float] = {}  # streamer -> unix expiry; skipped by get_highest_priority_live
         self.current_socket_path: Optional[Path] = None
         self.last_known_game: Optional[str] = None
         self.last_known_title: Optional[str] = None
@@ -270,9 +271,11 @@ class TwitchTVController:
             self._save_last_seen()
 
     def get_highest_priority_live(self, live_streams: Dict) -> Optional[str]:
-        """Return the highest priority streamer that's currently live"""
+        """Return the highest priority streamer that's currently live and not
+        on relaunch cooldown (see _handle_stream_death)."""
+        now = time.time()
         for streamer in self.priority_list:
-            if streamer in live_streams:
+            if streamer in live_streams and self.cooldowns.get(streamer, 0.0) < now:
                 return streamer
         return None
 

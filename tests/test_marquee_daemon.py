@@ -232,3 +232,29 @@ def test_query_single_live_returns_none_on_unparseable_output(monkeypatch):
                         lambda cmd, **kw: mock.Mock(returncode=1, stdout="not json", stderr="boom"))
     ctrl = TwitchTVController.__new__(TwitchTVController)
     assert ctrl._query_single_live("alpha") is None
+
+
+def test_highest_priority_skips_cooled_down_streamer(monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr("marquee_daemon.time.time", lambda: now[0])
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    ctrl.priority_list = ["alpha", "beta"]
+    ctrl.cooldowns = {"alpha": 1200.0}
+    live = {"alpha": {}, "beta": {}}
+    assert ctrl.get_highest_priority_live(live) == "beta"
+
+
+def test_highest_priority_returns_streamer_after_cooldown_expires(monkeypatch):
+    now = [1300.0]
+    monkeypatch.setattr("marquee_daemon.time.time", lambda: now[0])
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    ctrl.priority_list = ["alpha", "beta"]
+    ctrl.cooldowns = {"alpha": 1200.0}
+    assert ctrl.get_highest_priority_live({"alpha": {}, "beta": {}}) == "alpha"
+
+
+def test_highest_priority_no_cooldowns_attr_safe():
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    ctrl.priority_list = ["alpha"]
+    ctrl.cooldowns = {}
+    assert ctrl.get_highest_priority_live({"alpha": {}}) == "alpha"
