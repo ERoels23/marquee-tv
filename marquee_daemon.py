@@ -39,8 +39,15 @@ def mpv_socket_path(streamer: str) -> Path:
 def parse_control_command(raw: str):
     """Parse a raw .control file command.
 
-    Returns (streamer, mode) where mode is None for a legacy/plain switch,
-    or one of "override"/"temporary"/"oneshot". Returns None if unrecognized.
+    Returns (streamer, mode):
+    - ("", None)            for a bare "switch" (switch to highest priority now)
+    - (streamer, None)      for a plain "switch:<streamer>"
+    - (streamer, mode)      for "switch:<streamer>:<mode>", mode one of
+                            "override"/"temporary"/"oneshot"
+    - (None, "play") / (None, "stop")   for the bare "play"/"stop" playback
+                            tokens — the None streamer is a sentinel callers
+                            special-case to toggle playback rather than switch
+    Returns None if unrecognized.
     """
     raw = raw.strip().lower()
     if raw == "switch":
@@ -327,13 +334,7 @@ class TwitchTVController:
 
     def launch_stream(self, streamer: str, stream_info: Optional[Dict] = None):
         """Launch a Twitch stream using streamlink"""
-        # Kill any existing process
-        if self.current_process is not None:
-            try:
-                self.current_process.terminate()
-                self.current_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.current_process.kill()
+        self._terminate_current_process()
 
         # This system's Chatterino build doesn't activate tabs in an already-running
         # window via -a (spawns a new process instead) — so we close any existing
@@ -400,16 +401,22 @@ class TwitchTVController:
         self.grace_period_start = None
         self.save_status()
 
+    def _terminate_current_process(self) -> None:
+        """SIGTERM the current mpv/streamlink process, escalating to SIGKILL if
+        it hasn't exited within 5s. No-op when nothing is running."""
+        if self.current_process is None:
+            return
+        try:
+            self.current_process.terminate()
+            self.current_process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.current_process.kill()
+
     def _stop_playback(self) -> None:
         """Stop playing a stream but keep monitoring. Toggled by the `stop`
         control token / the UI's (X)."""
         self.playback_enabled = False
-        if self.current_process is not None:
-            try:
-                self.current_process.terminate()
-                self.current_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.current_process.kill()
+        self._terminate_current_process()
         subprocess.run(["pkill", "-x", "chatterino"], capture_output=True)
         if self.current_socket_path is not None:
             self.current_socket_path.unlink(missing_ok=True)
@@ -419,6 +426,8 @@ class TwitchTVController:
         self.switching_soon = None
         self.grace_period_start = None
         self.manual_override = False
+        self._handled_current_death = False
+        self.current_stream_started_at = None
 
     def _apply_playback_token(self, token: str) -> None:
         if token == "play":
@@ -446,9 +455,10 @@ class TwitchTVController:
 
     def check_control_signal(self):
         """
-        Check if user has signaled to switch.
-        Returns: (streamer, mode) tuple, or None if no signal.
-        mode is None for a plain/legacy switch, or "override"/"temporary"/"oneshot".
+        Read and consume the .control file.
+        Returns the parse_control_command() result — a (streamer, mode) tuple,
+        where a None streamer with mode "play"/"stop" is the playback-toggle
+        sentinel — or None if there's no signal.
         """
         if CONTROL_FILE.exists():
             try:

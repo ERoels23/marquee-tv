@@ -150,7 +150,7 @@ async def test_stopping_playback_clears_stale_stream_name_from_now_watching(tmp_
         frame = app.query_one("#frame")
         now_watching = frame.content.split("PRIORITY LIST")[0]
         assert "teststreamer" not in now_watching  # stale channel name gone from NOW WATCHING box
-        assert "No stream active" in now_watching  # idle until the daemon confirms the stop
+        assert "Playback stopped" in now_watching  # instant feedback, not a poll cycle late
 
 
 @pytest.mark.asyncio
@@ -1415,6 +1415,40 @@ async def test_x_writes_stop_token_without_killing_mpv(tmp_path, monkeypatch):
         assert app.current_stream is None
         commands = [list(call[0]) for call in run_calls]
         assert not any("mpv" in " ".join(str(x) for x in c) for c in commands)
+
+
+@pytest.mark.asyncio
+async def test_s_paints_highlight_before_blocking_daemon_start(tmp_path, monkeypatch):
+    # Regression: on a cold-start (S) the footer highlight must be painted
+    # before the blocking start_service() call, not delayed until after the
+    # ~1s `marquee.sh start` returns.
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("alpha\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr("marquee_ui.CONTROL_FILE", tmp_path / ".control")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: False)
+
+    call_order = []
+    monkeypatch.setattr(MarqueeApp, "start_service", lambda self: call_order.append("start_service"))
+    orig_render = MarqueeApp.render_frame
+
+    def tracking_render(self):
+        if "start_service" not in call_order and self.last_footer_key == "s":
+            call_order.append("render_with_highlight")
+        orig_render(self)
+
+    monkeypatch.setattr(MarqueeApp, "render_frame", tracking_render)
+
+    app = MarqueeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        call_order.clear()  # ignore on_mount's own auto-start
+        await pilot.press("s")
+        await pilot.pause()
+        assert call_order[:2] == ["render_with_highlight", "start_service"]
 
 
 @pytest.mark.asyncio

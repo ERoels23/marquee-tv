@@ -247,12 +247,15 @@ class MarqueeApp(App):
     def compose(self) -> ComposeResult:
         yield Static(id="frame", markup=False)
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         self.load_entries()
         self._terminal_width = self.size.width
         self._terminal_height = self.size.height
+        self.render_frame()  # paint something immediately, before the blocking daemon start
         if not self.daemon_running():
-            self.start_service()  # always monitor so info is visible without playing
+            import asyncio
+            # always monitor so info is visible without playing
+            await asyncio.to_thread(self.start_service)
         self.refresh_data(force=True)
         self.render_frame()
         self.set_interval(REFRESH_INTERVAL, self.tick)
@@ -763,6 +766,7 @@ class MarqueeApp(App):
 
     async def action_start_service(self) -> None:
         self.last_footer_key = "s"
+        self.render_frame()  # paint the highlight before the blocking start_service call
         if not self.daemon_running():
             import asyncio
             await asyncio.to_thread(self.start_service)
@@ -776,6 +780,7 @@ class MarqueeApp(App):
             f.write("stop")
         self.current_stream = None
         self.stream_alive = False
+        self.playback_enabled = False
         self.render_frame()
 
     def action_request_quit(self) -> None:
