@@ -295,3 +295,13 @@ def test_stream_death_real_session_still_live_is_deliberate_close(monkeypatch):
     ctrl._handle_stream_death()
     assert "alpha" not in ctrl.cooldowns
     assert "alpha" in ctrl.live_streams
+
+
+def test_explicit_switch_clears_target_cooldown(monkeypatch):
+    now = [2000.0]
+    monkeypatch.setattr("marquee_daemon.time.time", lambda: now[0])
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    ctrl.priority_list = ["alpha", "beta"]
+    ctrl.cooldowns = {"beta": 9999.0}
+    ctrl.clear_cooldown("beta")
+    assert "beta" not in ctrl.cooldowns

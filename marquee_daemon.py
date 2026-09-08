@@ -305,6 +305,9 @@ class TwitchTVController:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] {streamer} ended "
                   f"(ran {int(ran_for)}s, still_live={still_live}) — cooling down {RELAUNCH_COOLDOWN}s")
 
+    def clear_cooldown(self, streamer: str) -> None:
+        self.cooldowns.pop(streamer, None)
+
     def launch_stream(self, streamer: str, stream_info: Optional[Dict] = None):
         """Launch a Twitch stream using streamlink"""
         # Kill any existing process
@@ -505,11 +508,18 @@ class TwitchTVController:
                         # Legacy "switch" command - switch to highest priority now
                         control_target, control_mode = highest_priority, None
                     elif target and target in self.live_streams:
+                        self.clear_cooldown(target)
                         control_target, control_mode = target, mode
 
                 # If no stream is currently running, launch the requested stream
                 # if one was specified (even if it isn't the highest priority),
                 # otherwise fall back to the highest priority one.
+                if (self.current_stream is not None and self.current_process is not None
+                        and not self.is_stream_alive() and not self._handled_current_death):
+                    self._handled_current_death = True
+                    self._handle_stream_death()
+                    highest_priority = self.get_highest_priority_live(self.live_streams)
+
                 if not self.is_stream_alive():
                     launch_target = control_target or highest_priority
                     if launch_target:
