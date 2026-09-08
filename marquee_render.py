@@ -39,6 +39,8 @@ class RowData:
     last_seen: Optional[dict] = None  # {"at": iso_str, "game": str|None, "title": str|None}
     username: str = ""
     is_separator: bool = False  # a "---" line in streamers.txt — not a real streamer
+    separator_label: Optional[str] = None   # label drawn into a block's top rule line
+    separator_warning: bool = False         # render separator_label as a warning (yellow)
 
 
 STATUS_DOT = "●"  # 1 cell wide, colorable

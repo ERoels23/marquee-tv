@@ -344,6 +344,67 @@ async def test_separator_line_renders_and_connects_to_box_border(tmp_path, monke
 
 
 @pytest.mark.asyncio
+async def test_ui_renders_block_in_resolved_order_with_window_label(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("top|Top\n@block\naaa|Aaa\nbbb|Bbb\n@when 00:00-23:59: bbb, aaa\n@end\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "start_service", lambda self: None)
+    monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: True)
+
+    app = MarqueeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        content = app.query_one("#frame").content.plain
+        assert content.index("Bbb") < content.index("Aaa")
+        assert "00:00" in content
+
+
+@pytest.mark.asyncio
+async def test_ui_renders_block_warning_line(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("@block\naaa\nbbb\n@when 08:00-21:00: aaa, bbb\n@when 20:00-08:00: bbb, aaa\n@end\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "start_service", lambda self: None)
+    monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: True)
+
+    app = MarqueeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        content = app.query_one("#frame").content.plain
+        assert "⚠" in content and "overlap" in content.lower()
+        assert "aaa" in content and "bbb" in content
+
+
+@pytest.mark.asyncio
+async def test_ui_navigation_skips_block_rule_lines(tmp_path, monkeypatch):
+    streamers_file = tmp_path / "streamers.txt"
+    streamers_file.write_text("top\n@block\naaa\nbbb\n@when 00:00-23:59: aaa, bbb\n@end\nbottom\n")
+    monkeypatch.setattr("marquee_ui.STREAMERS_FILE", streamers_file)
+    monkeypatch.setattr("marquee_ui.STATUS_FILE", tmp_path / ".status.json")
+    monkeypatch.setattr("marquee_ui.LAST_SEEN_FILE", tmp_path / ".last_seen.json")
+    monkeypatch.setattr(MarqueeApp, "poll_live_streams_from_api", lambda self: {})
+    monkeypatch.setattr(MarqueeApp, "start_service", lambda self: None)
+    monkeypatch.setattr(MarqueeApp, "daemon_running", lambda self: True)
+
+    app = MarqueeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        seen = set()
+        for _ in range(8):
+            seen.add(app.entries[app.nav.index].username)
+            await pilot.press("down")
+            await pilot.pause()
+        assert "" not in seen
+        assert {"top", "aaa", "bbb", "bottom"} <= seen
+
+
+@pytest.mark.asyncio
 async def test_navigation_skips_separator_line(tmp_path, monkeypatch):
     streamers_file = tmp_path / "streamers.txt"
     streamers_file.write_text("alpha\n---\nbeta\n")

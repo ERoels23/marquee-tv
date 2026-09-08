@@ -15,7 +15,7 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
-from priority_list import parse_streamers_file, StreamerEntry
+from priority_list import parse_streamers_file, StreamerEntry, TimeBlock, _in_window
 from marquee_model import ListNavigator, AdHocFlow, AdHocFlowState, AdHocMode
 from marquee_render import (
     HeaderData, RowData, render_header, render_row_collapsed, render_row_expanded_detail,
@@ -50,6 +50,7 @@ BORDER_COLOR = "#74c7ec"  # Sapphire — outer box, NOW WATCHING/PRIORITY LIST b
 HIGHLIGHT_STYLE = "bold #1e1e2e on #b4befe"  # dark text on Lavender bar
 LIVE_DOT_STYLE = "#a6e3a1"  # Green — lit
 OFFLINE_DOT_STYLE = "#6c7086"  # Grey — unlit
+WARNING_STYLE = "#f9e2af"  # Catppuccin Mocha Yellow — malformed @block warnings
 
 class QuitConfirmModal(ModalScreen[Optional[str]]):
     """Centered popup letting the user pick whether quitting also stops the
@@ -226,6 +227,7 @@ class MarqueeApp(App):
         # matches whatever theme the user's terminal is configured with.
         self.theme = "ansi-dark"
         self.entries: List[StreamerEntry] = []
+        self.priority_entries: List = []
         self.live_streams: Dict[str, Dict] = {}
         self.last_seen: Dict[str, str] = {}
         self.current_stream: Optional[str] = None
@@ -267,7 +269,34 @@ class MarqueeApp(App):
         self.render_frame()
 
     def load_entries(self) -> None:
-        self.entries = parse_streamers_file(STREAMERS_FILE)
+        self.priority_entries = parse_streamers_file(STREAMERS_FILE)
+        self._reresolve_entries()
+
+    def _reresolve_entries(self) -> None:
+        """Rebuild self.entries (a flat StreamerEntry list) from the parsed
+        priority list, resolved against the current time. Each TimeBlock is
+        bracketed by synthetic separator entries; the top one carries a label
+        (the active @when window, `⏱ default order` when none matches, or a
+        `⚠ …` warning for a malformed block)."""
+        import datetime
+        now = datetime.datetime.now().time()
+        flat: List[StreamerEntry] = []
+        for item in self.priority_entries:
+            if isinstance(item, TimeBlock):
+                if item.warning:
+                    top = StreamerEntry(username="", is_separator=True,
+                                        block_label=f"⚠ {item.warning}", block_warning=True)
+                else:
+                    active = next((r for r in item.rules if _in_window(now, r.start, r.end)), None)
+                    lbl = (f"⏱ {active.start.strftime('%H:%M')}-{active.end.strftime('%H:%M')}"
+                           if active else "⏱ default order")
+                    top = StreamerEntry(username="", is_separator=True, block_label=lbl)
+                flat.append(top)
+                flat.extend(item.resolve(now))
+                flat.append(StreamerEntry(username="", is_separator=True))
+            else:
+                flat.append(item)
+        self.entries = flat
         separator_indices = {i for i, e in enumerate(self.entries) if e.is_separator}
         self.nav.set_count(len(self.entries), skip_indices=separator_indices)
 
@@ -283,7 +312,7 @@ class MarqueeApp(App):
         Queries by explicit user_login rather than /streams/followed, since the
         priority list can include streamers the account doesn't follow — a
         followed-only query would silently never report them live."""
-        usernames = [e.username for e in self.entries]
+        usernames = [e.username for e in self.entries if not e.is_separator]
         if not usernames:
             return {}
         live: Dict[str, Dict] = {}
@@ -400,6 +429,7 @@ class MarqueeApp(App):
 
     def tick(self) -> None:
         self.refresh_data()
+        self._reresolve_entries()  # re-resolve so a @when boundary crossing updates the display live
         self.render_frame()
 
     def _transition_header_lines(self, width: int) -> Optional[List[str]]:
@@ -452,7 +482,9 @@ class MarqueeApp(App):
         rows = []
         for entry in self.entries:
             if entry.is_separator:
-                rows.append(RowData(name="", is_live=False, is_separator=True))
+                rows.append(RowData(name="", is_live=False, is_separator=True,
+                                    separator_label=getattr(entry, "block_label", None),
+                                    separator_warning=getattr(entry, "block_warning", False)))
                 continue
             info = self.live_streams.get(entry.username)
             is_live = info is not None
@@ -616,13 +648,28 @@ class MarqueeApp(App):
         for i in range(start, end):
             row = rows[i]
             if row.is_separator:
-                # A "---" line in streamers.txt: a horizontal rule connecting
-                # with the box's own side borders, never highlighted or
-                # landed on by navigation (ListNavigator skips it).
-                lines.append(Text(
-                    "║" + " " * MARGIN + "├" + "─" * (list_inner + 2) + "┤" + " " * MARGIN + "║",
-                    style=B,
-                ))
+                # A "---" line in streamers.txt (or a synthetic @block rule
+                # line): a horizontal rule connecting with the box's own side
+                # borders, never highlighted or landed on by navigation
+                # (ListNavigator skips it). A block's top rule carries a label
+                # (active @when window, or a yellow warning for a bad block).
+                interior = list_inner + 2
+                if row.separator_label:
+                    lbl = f" {row.separator_label} "
+                    if cell_len(lbl) > interior:
+                        lbl = set_cell_size(lbl, interior)
+                    dashes = "─" * (interior - cell_len(lbl))
+                    lbl_style = WARNING_STYLE if row.separator_warning else B
+                    lines.append(self._styled_line(
+                        ("║" + " " * MARGIN + "├", B),
+                        (lbl, lbl_style),
+                        (dashes + "┤" + " " * MARGIN + "║", B),
+                    ))
+                else:
+                    lines.append(Text(
+                        "║" + " " * MARGIN + "├" + "─" * interior + "┤" + " " * MARGIN + "║",
+                        style=B,
+                    ))
             elif i == self.nav.index:
                 lines.append(Text("║" + " " * inner_width + "║", style=B))
                 collapsed = render_row_collapsed(row, inner_width - 3, highlighted=True)

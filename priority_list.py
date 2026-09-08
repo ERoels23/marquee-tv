@@ -12,6 +12,8 @@ class StreamerEntry:
     username: str
     nickname: Optional[str] = None
     is_separator: bool = False
+    block_label: Optional[str] = None   # UI-only: label drawn into a block's top rule line
+    block_warning: bool = False         # UI-only: render block_label as a warning
 
     @property
     def display_name(self) -> str:

@@ -6,6 +6,13 @@ from marquee_render import (
 )
 
 
+def test_rowdata_carries_separator_label_and_warning():
+    r = RowData(name="", is_live=False, is_separator=True,
+                separator_label="⏱ 20:00-08:00", separator_warning=False)
+    assert r.separator_label == "⏱ 20:00-08:00"
+    assert r.separator_warning is False
+
+
 def test_render_header_idle():
     header = HeaderData(active=False)
     lines = render_header(header, 40)
