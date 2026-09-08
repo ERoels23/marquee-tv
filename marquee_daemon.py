@@ -29,7 +29,7 @@ CHECK_INTERVAL = 10  # Check for new streams and control signals every 10 second
 API_UPDATE_INTERVAL = 60  # Only query Twitch API every 60 seconds (rate limiting)
 GRACE_PERIOD = 300  # 5 minutes before auto-switching (in seconds)
 RELAUNCH_COOLDOWN = 300  # seconds a just-ended streamer is skipped for before we'll relaunch it
-MIN_REAL_SESSION = 30  # a stream that ran shorter than this "never really started"
+MIN_REAL_SESSION = 30  # a stream that ran shorter than this is treated as "never really started"
 
 
 def mpv_socket_path(streamer: str) -> Path:
@@ -156,9 +156,11 @@ class TwitchTVController:
 
     def _query_single_live(self, streamer: str) -> Optional[Dict]:
         """One targeted Twitch query for a single streamer's live info.
-        Returns the stream-info dict, or None if offline / query failed.
-        Mirrors get_live_streams' "judge success by whether stdout parses,
-        not the exit code" handling (the twitch CLI can crash post-output)."""
+        Returns {title, game, viewers, started_at}, or None if the streamer
+        is offline or the query failed in any way. Success is judged by the
+        output parsing (not the exit code — the twitch CLI can crash after
+        printing valid JSON); a timeout, unparseable output, or a stream
+        object missing expected fields all resolve to None."""
         try:
             result = subprocess.run(
                 ["twitch", "api", "get", "streams", "-q", f"user_login={streamer}"],
@@ -171,10 +173,13 @@ class TwitchTVController:
         if not streams:
             return None
         s = streams[0]
-        return {
-            "title": s["title"], "game": s["game_name"],
-            "viewers": s["viewer_count"], "started_at": s.get("started_at"),
-        }
+        try:
+            return {
+                "title": s["title"], "game": s["game_name"],
+                "viewers": s["viewer_count"], "started_at": s.get("started_at"),
+            }
+        except KeyError:
+            return None
 
     def backfill_last_seen(self) -> None:
         """One-time startup pass: for any priority-list entry missing a
@@ -305,8 +310,17 @@ class TwitchTVController:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] {streamer} ended "
                   f"(ran {int(ran_for)}s, still_live={still_live}) — cooling down {RELAUNCH_COOLDOWN}s")
 
-    def clear_cooldown(self, streamer: str) -> None:
+    def _clear_cooldown(self, streamer: str) -> None:
+        """Drop a streamer's relaunch cooldown (an explicit switch to it)."""
         self.cooldowns.pop(streamer, None)
+
+    def _settle_after_death(self, control_target: Optional[str]) -> Optional[str]:
+        """After _handle_stream_death may have pruned live_streams, drop a
+        control target that's no longer live so run() doesn't index a
+        missing key when it launches control_target."""
+        if control_target is not None and control_target not in self.live_streams:
+            return None
+        return control_target
 
     def launch_stream(self, streamer: str, stream_info: Optional[Dict] = None):
         """Launch a Twitch stream using streamlink"""
@@ -508,18 +522,22 @@ class TwitchTVController:
                         # Legacy "switch" command - switch to highest priority now
                         control_target, control_mode = highest_priority, None
                     elif target and target in self.live_streams:
-                        self.clear_cooldown(target)
+                        self._clear_cooldown(target)
                         control_target, control_mode = target, mode
 
-                # If no stream is currently running, launch the requested stream
-                # if one was specified (even if it isn't the highest priority),
-                # otherwise fall back to the highest priority one.
+                # The current stream's process has exited: classify it as
+                # stream-end (cooldown + prune) vs hand-close once, then
+                # re-derive selection from the possibly-pruned live set.
                 if (self.current_stream is not None and self.current_process is not None
                         and not self.is_stream_alive() and not self._handled_current_death):
                     self._handled_current_death = True
                     self._handle_stream_death()
                     highest_priority = self.get_highest_priority_live(self.live_streams)
+                    control_target = self._settle_after_death(control_target)
 
+                # If no stream is currently running, launch the requested stream
+                # if one was specified (even if it isn't the highest priority),
+                # otherwise fall back to the highest priority one.
                 if not self.is_stream_alive():
                     launch_target = control_target or highest_priority
                     if launch_target:

@@ -234,6 +234,17 @@ def test_query_single_live_returns_none_on_unparseable_output(monkeypatch):
     assert ctrl._query_single_live("alpha") is None
 
 
+def test_query_single_live_returns_none_on_malformed_stream_object(monkeypatch):
+    # The twitch CLI is flaky; a stream object missing expected keys must not
+    # crash out of _handle_stream_death (which has already latched
+    # _handled_current_death). Treat it as "couldn't confirm live".
+    monkeypatch.setattr("marquee_daemon.subprocess.run",
+                        lambda cmd, **kw: mock.Mock(returncode=0, stdout=json.dumps(
+                            {"data": [{"user_login": "alpha"}]})))
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    assert ctrl._query_single_live("alpha") is None
+
+
 def test_highest_priority_skips_cooled_down_streamer(monkeypatch):
     now = [1000.0]
     monkeypatch.setattr("marquee_daemon.time.time", lambda: now[0])
@@ -303,5 +314,25 @@ def test_explicit_switch_clears_target_cooldown(monkeypatch):
     ctrl = TwitchTVController.__new__(TwitchTVController)
     ctrl.priority_list = ["alpha", "beta"]
     ctrl.cooldowns = {"beta": 9999.0}
-    ctrl.clear_cooldown("beta")
+    ctrl._clear_cooldown("beta")
     assert "beta" not in ctrl.cooldowns
+
+
+def test_settle_after_death_drops_stale_control_target():
+    # alpha just ended and _handle_stream_death popped it from live_streams;
+    # a control target still pointing at alpha would KeyError at launch.
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    ctrl.live_streams = {"beta": {}}
+    assert ctrl._settle_after_death("alpha") is None
+
+
+def test_settle_after_death_keeps_still_live_control_target():
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    ctrl.live_streams = {"alpha": {}, "beta": {}}
+    assert ctrl._settle_after_death("beta") == "beta"
+
+
+def test_settle_after_death_none_stays_none():
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    ctrl.live_streams = {"alpha": {}}
+    assert ctrl._settle_after_death(None) is None
