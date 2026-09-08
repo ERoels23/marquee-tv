@@ -9,10 +9,20 @@
 #
 # A line containing exactly --- renders as a separator in the priority
 # list and is skipped by navigation — useful for grouping streamers.
+#
+# Time-based priority: wrap a contiguous group in @block ... @end, then add
+# @when HH:MM-HH:MM: name, name lines to reorder those members by time of
+# day. 24-hour clock, start inclusive / end exclusive, windows may wrap past
+# midnight but must not overlap. Members left out of a matching @when keep
+# their default order after the listed ones. A malformed block is ignored
+# (members fall back to default order) and flagged in the UI. See README.
 
 # Add your streamers below in priority order:
+@block
 jerma985|Jerma
 cosmonaut_variety_hour|Cosmonaut
+@when 20:00-08:00: cosmonaut_variety_hour, jerma985
+@end
 northernlion|Northernlion
 shaun_vids|Shaun
 chiblee|Chiblee
