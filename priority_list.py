@@ -1,6 +1,8 @@
-from dataclasses import dataclass
+import datetime
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 
 
 @dataclass
@@ -33,6 +35,25 @@ def parse_streamers_file(path: Path) -> List[StreamerEntry]:
                 nickname = None
             entries.append(StreamerEntry(username=username, nickname=nickname))
     return entries
+
+
+_HHMM_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+
+
+def _parse_hhmm(text: str) -> Optional[datetime.time]:
+    """Parse strict 'HH:MM' 24-hour time. Returns None on anything malformed."""
+    m = _HHMM_RE.match(text.strip())
+    if not m:
+        return None
+    return datetime.time(int(m.group(1)), int(m.group(2)))
+
+
+def _in_window(t: datetime.time, start: datetime.time, end: datetime.time) -> bool:
+    """True if `t` is in [start, end): start inclusive, end exclusive.
+    If start > end the window wraps past midnight."""
+    if start <= end:
+        return start <= t < end
+    return t >= start or t < end
 
 
 def usernames(entries: List[StreamerEntry]) -> List[str]:

@@ -80,3 +80,39 @@ def test_separator_with_surrounding_whitespace(tmp_path):
     f.write_text("alpha\n  ---  \nbeta\n")
     entries = parse_streamers_file(f)
     assert entries[1].is_separator is True
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: time-based priority rules
+# ---------------------------------------------------------------------------
+
+import datetime
+import pytest
+from priority_list import _parse_hhmm, _in_window
+
+
+def test_parse_hhmm_valid():
+    assert _parse_hhmm("08:00") == datetime.time(8, 0)
+    assert _parse_hhmm("23:59") == datetime.time(23, 59)
+    assert _parse_hhmm("00:00") == datetime.time(0, 0)
+
+
+@pytest.mark.parametrize("bad", ["25:00", "08:60", "8:00", "0800", "8am", "", "12:5"])
+def test_parse_hhmm_invalid_returns_none(bad):
+    assert _parse_hhmm(bad) is None
+
+
+def test_in_window_same_day():
+    s, e = datetime.time(8, 0), datetime.time(20, 0)
+    assert _in_window(datetime.time(12, 0), s, e) is True
+    assert _in_window(datetime.time(8, 0), s, e) is True
+    assert _in_window(datetime.time(20, 0), s, e) is False
+    assert _in_window(datetime.time(7, 59), s, e) is False
+
+
+def test_in_window_wraps_midnight():
+    s, e = datetime.time(20, 0), datetime.time(8, 0)
+    assert _in_window(datetime.time(23, 0), s, e) is True
+    assert _in_window(datetime.time(3, 0), s, e) is True
+    assert _in_window(datetime.time(8, 0), s, e) is False
+    assert _in_window(datetime.time(12, 0), s, e) is False
