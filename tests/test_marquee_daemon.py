@@ -404,12 +404,16 @@ def test_stop_playback_tears_down_and_clears_state(monkeypatch):
     ctrl.switching_soon = "beta"
     ctrl.grace_period_start = "whatever"
     ctrl.manual_override = True
+    ctrl._handled_current_death = True
+    ctrl.current_stream_started_at = 123.0
     ctrl._stop_playback()
     assert ctrl.playback_enabled is False
     assert ctrl.current_stream is None
     assert ctrl.switching_soon is None
     assert ctrl.grace_period_start is None
     assert ctrl.manual_override is False
+    assert ctrl._handled_current_death is False
+    assert ctrl.current_stream_started_at is None
     proc.terminate.assert_called_once()
     assert ["pkill", "-x", "chatterino"] in killed
 
