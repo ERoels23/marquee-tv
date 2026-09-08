@@ -268,3 +268,33 @@ def test_usernames_still_accepts_flat_list(tmp_path):
     f = tmp_path / "streamers.txt"
     f.write_text("a\nb\n")
     assert usernames(parse_streamers_file(f)) == ["a", "b"]
+
+
+def test_block_malformed_when_reports_typo_not_missing_rules():
+    b = _block("a\nb\n@when 8am-noon\n")
+    assert b.warning is not None
+    assert "malformed @when" in b.warning
+    assert "no @when rules" not in b.warning
+    assert b.warning.startswith("block (a, b):")
+
+
+def test_block_missing_end_carries_block_prefix():
+    from priority_list import _parse_block
+    b = _parse_block(["@block", "a", "b"], 1)[0]
+    assert b.warning is not None
+    assert b.warning.startswith("block (a, b):")
+    assert "@end" in b.warning
+    assert [m.username for m in b.members] == ["a", "b"]
+
+
+def test_block_structurally_broken_and_bad_rules_keeps_rule_warning():
+    from priority_list import _parse_block
+    lines = [
+        "@block", "a", "b",
+        "@when 08:00-21:00: a, b",
+        "@when 20:00-08:00: b, a",
+    ]  # no @end + overlapping windows
+    b = _parse_block(lines, 1)[0]
+    assert b.warning is not None
+    assert "overlap" in b.warning.lower()
+    assert b.warning.startswith("block (a, b):")

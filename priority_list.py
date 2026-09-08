@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import datetime
 import re
 from dataclasses import dataclass, field
@@ -87,25 +89,23 @@ def _parse_block(lines: List[str], i: int) -> tuple:
     else:
         structural_warning = structural_warning or "@block without a matching @end"
 
-    block = _build_block(members, raw_rules)
-    if structural_warning and block.warning is None:
-        block.warning = structural_warning
+    block = _build_block(members, raw_rules, structural_warning)
     return block, i
 
 
-def _build_block(members: List[StreamerEntry], raw_rules: list) -> TimeBlock:
+def _build_block(
+    members: List[StreamerEntry],
+    raw_rules: list,
+    structural_warning: Optional[str] = None,
+) -> TimeBlock:
     member_names = {m.username for m in members}
     warning = None
     parsed_rules: List[TimeRule] = []
 
     def warn(msg):
         nonlocal warning
-        warning = warning or msg
-
-    if not members:
-        warn("block has no member streamers")
-    if not raw_rules:
-        warn("block has no @when rules")
+        if msg:
+            warning = warning or msg
 
     coverage = [0] * (24 * 60)
     for start_str, end_str, names in raw_rules:
@@ -133,6 +133,15 @@ def _build_block(members: List[StreamerEntry], raw_rules: list) -> TimeBlock:
 
     if any(c > 1 for c in coverage):
         warn("@when windows overlap")
+
+    # Priority: rule-content problems (above) > structural problems > emptiness,
+    # so a typo'd @when reports the typo rather than "block has no @when rules".
+    warn(structural_warning)
+
+    if not members:
+        warn("block has no member streamers")
+    if not raw_rules:
+        warn("block has no @when rules")
 
     block = TimeBlock(members=members, rules=parsed_rules, warning=warning)
     if warning:
