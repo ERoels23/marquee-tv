@@ -204,3 +204,31 @@ def test_parse_unrecognized_returns_none():
 
 def test_parse_is_case_insensitive():
     assert parse_control_command("SWITCH:Jerma985:OVERRIDE") == ("jerma985", "override")
+
+
+def test_query_single_live_returns_info_when_live(monkeypatch):
+    def fake_run(cmd, **kwargs):
+        assert "user_login=alpha" in cmd
+        return mock.Mock(returncode=0, stdout=json.dumps({"data": [
+            {"user_login": "alpha", "title": "t", "game_name": "g", "viewer_count": 3,
+             "started_at": "2026-01-01T00:00:00Z"},
+        ]}))
+    monkeypatch.setattr("marquee_daemon.subprocess.run", fake_run)
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    assert ctrl._query_single_live("alpha") == {
+        "title": "t", "game": "g", "viewers": 3, "started_at": "2026-01-01T00:00:00Z",
+    }
+
+
+def test_query_single_live_returns_none_when_offline(monkeypatch):
+    monkeypatch.setattr("marquee_daemon.subprocess.run",
+                        lambda cmd, **kw: mock.Mock(returncode=0, stdout=json.dumps({"data": []})))
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    assert ctrl._query_single_live("alpha") is None
+
+
+def test_query_single_live_returns_none_on_unparseable_output(monkeypatch):
+    monkeypatch.setattr("marquee_daemon.subprocess.run",
+                        lambda cmd, **kw: mock.Mock(returncode=1, stdout="not json", stderr="boom"))
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    assert ctrl._query_single_live("alpha") is None

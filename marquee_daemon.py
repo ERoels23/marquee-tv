@@ -28,6 +28,8 @@ LAST_SEEN_FILE = SCRIPT_DIR / ".last_seen.json"
 CHECK_INTERVAL = 10  # Check for new streams and control signals every 10 seconds
 API_UPDATE_INTERVAL = 60  # Only query Twitch API every 60 seconds (rate limiting)
 GRACE_PERIOD = 300  # 5 minutes before auto-switching (in seconds)
+RELAUNCH_COOLDOWN = 300  # seconds a just-ended streamer is skipped for before we'll relaunch it
+MIN_REAL_SESSION = 30  # a stream that ran shorter than this "never really started"
 
 
 def mpv_socket_path(streamer: str) -> Path:
@@ -148,6 +150,28 @@ class TwitchTVController:
         except (json.JSONDecodeError, KeyError) as e:
             print(f"Error parsing Twitch API response: {e}")
             return live_streams
+
+    def _query_single_live(self, streamer: str) -> Optional[Dict]:
+        """One targeted Twitch query for a single streamer's live info.
+        Returns the stream-info dict, or None if offline / query failed.
+        Mirrors get_live_streams' "judge success by whether stdout parses,
+        not the exit code" handling (the twitch CLI can crash post-output)."""
+        try:
+            result = subprocess.run(
+                ["twitch", "api", "get", "streams", "-q", f"user_login={streamer}"],
+                capture_output=True, text=True, timeout=10,
+            )
+            data = json.loads(result.stdout)
+        except (subprocess.TimeoutExpired, json.JSONDecodeError):
+            return None
+        streams = data.get("data", [])
+        if not streams:
+            return None
+        s = streams[0]
+        return {
+            "title": s["title"], "game": s["game_name"],
+            "viewers": s["viewer_count"], "started_at": s.get("started_at"),
+        }
 
     def backfill_last_seen(self) -> None:
         """One-time startup pass: for any priority-list entry missing a
