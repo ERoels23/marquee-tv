@@ -10,8 +10,13 @@ sync, and live MPV title updates.
 ## Features
 
 - **Priority-based streaming**: define streamers in order of preference in
-  `streamers.txt`; the daemon launches the highest-priority currently-live
-  stream.
+  `streamers.txt`; once playback is enabled the daemon launches the
+  highest-priority currently-live stream.
+- **Always-on monitor, playback on demand**: opening the UI starts the daemon
+  automatically, but in monitor-only mode — it polls the priority list and
+  populates all the live info without launching anything. Press `(S)` (or run
+  `marquee.sh play`) to actually start playing; `(X)` (or `marquee.sh
+  stop-playback`) stops playback while leaving the daemon monitoring.
 - **Intelligent auto-switching**: when a higher-priority stream goes live
   while you're watching something lower-priority, a desktop notification
   fires and the daemon waits a 5-minute grace period before auto-switching,
@@ -110,7 +115,8 @@ The TUI is a single bordered "Marquee.tv" window containing:
 
 - **NOW WATCHING** box — streamer name, live/offline indicator, viewer
   count, category, uptime, and stream title for whatever's currently
-  playing. Shows "No stream active" when idle. The box's border label reads
+  playing. Shows "No stream active" when idle, or "Playback stopped — press
+  (S) to start" when the daemon is running monitor-only. The box's border label reads
   `NOW WATCHING (ad-hoc · override|temporary)` while an Override or
   Temporary ad-hoc stream is playing in this box, so you can always tell at
   a glance whether you're on your normal priority-list rotation or
@@ -122,6 +128,18 @@ The TUI is a single bordered "Marquee.tv" window containing:
   time>` (if offline, from `.last_seen.json`).
 - A footer with the current hotkey glossary — the keybindings are all shown
   right there as soon as you launch the UI.
+
+### Starting and stopping playback
+
+The daemon starts automatically when the UI launches, but only *monitors* —
+it won't play anything until you tell it to.
+
+- **`(S)tart`** — begin playback. Starts the daemon first if it somehow isn't
+  running, then signals it to launch the highest-priority live stream.
+  (Selecting a stream with `Enter` also implies "start".)
+- **`(X)Stop`** — stop playback. The current stream and Chatterino are torn
+  down, but the daemon keeps running and monitoring, so the priority list and
+  live info stay up to date and you can `(S)` again at any time.
 
 ### Ad-hoc stream watching
 
@@ -169,13 +187,19 @@ overlay, not cached or polled in the background. Press `i` again to close it.
 ### Command-line control
 
 ```bash
-# Start the daemon (runs in background)
+# Start the daemon (runs in background; monitors the priority list, does not auto-play)
 marquee.sh start
+
+# Start playing the highest-priority stream (daemon keeps running)
+marquee.sh play
+
+# Stop playback but keep the daemon monitoring
+marquee.sh stop-playback
 
 # Check current status
 marquee.sh status
 
-# Stop the daemon
+# Stop the daemon entirely
 marquee.sh stop
 
 # Run the daemon in the foreground (for debugging/testing)
@@ -223,8 +247,8 @@ for one-shot streams).
 - `marquee_daemon.py` - background daemon: polling, auto-switch logic,
   stream launching, Chatterino sync, live title updates
 - `marquee_ui.py` - Textual-based interactive TUI
-- `marquee.sh` - control script / entry point (`ui`, `start`, `stop`,
-  `status`, `now`, `watch`, `log`)
+- `marquee.sh` - control script / entry point (`ui`, `start`, `stop`, `play`,
+  `stop-playback`, `status`, `now`, `watch`, `log`)
 - `marquee.service` - systemd user unit for running the daemon standalone
 - `streamers.txt` - priority list (edit this, or press `e` in the UI!)
 - `marquee_model.py`, `marquee_render.py`, `mpv_ipc.py`, `priority_list.py`,
@@ -258,6 +282,9 @@ for one-shot streams).
   systemctl --user enable marquee
   systemctl --user start marquee
   ```
+  This runs the daemon **monitor-only** — it tracks the priority list and
+  writes status, but won't auto-play anything until it receives a `play`
+  signal (the UI's `(S)` or `marquee.sh play`).
 
 - **Window placement on a second monitor**: if you use Chatterino alongside
   Marquee.tv, it's worth setting up window rules in your desktop environment
