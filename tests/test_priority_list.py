@@ -116,3 +116,36 @@ def test_in_window_wraps_midnight():
     assert _in_window(datetime.time(3, 0), s, e) is True
     assert _in_window(datetime.time(8, 0), s, e) is False
     assert _in_window(datetime.time(12, 0), s, e) is False
+
+
+from priority_list import StreamerEntry, TimeRule, TimeBlock
+
+
+def _members(*names):
+    return [StreamerEntry(username=n) for n in names]
+
+
+def test_timeblock_resolve_uses_matching_window():
+    block = TimeBlock(
+        members=_members("a", "b"),
+        rules=[TimeRule(datetime.time(20, 0), datetime.time(8, 0), ["b", "a"])],
+    )
+    assert [e.username for e in block.resolve(datetime.time(22, 0))] == ["b", "a"]
+    assert [e.username for e in block.resolve(datetime.time(12, 0))] == ["a", "b"]
+
+
+def test_timeblock_resolve_appends_omitted_members_in_default_order():
+    block = TimeBlock(
+        members=_members("a", "b", "c"),
+        rules=[TimeRule(datetime.time(20, 0), datetime.time(8, 0), ["c"])],
+    )
+    assert [e.username for e in block.resolve(datetime.time(22, 0))] == ["c", "a", "b"]
+
+
+def test_timeblock_with_warning_always_returns_default_order():
+    block = TimeBlock(
+        members=_members("a", "b"),
+        rules=[TimeRule(datetime.time(20, 0), datetime.time(8, 0), ["b", "a"])],
+        warning="overlapping windows",
+    )
+    assert [e.username for e in block.resolve(datetime.time(22, 0))] == ["a", "b"]

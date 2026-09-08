@@ -37,6 +37,37 @@ def parse_streamers_file(path: Path) -> List[StreamerEntry]:
     return entries
 
 
+@dataclass
+class TimeRule:
+    start: datetime.time
+    end: datetime.time
+    order: List[str]  # usernames, priority order while this window is active
+
+
+@dataclass
+class TimeBlock:
+    members: List[StreamerEntry]          # default (file) order
+    rules: List[TimeRule] = field(default_factory=list)
+    warning: Optional[str] = None         # set => rules are invalid, treat as a plain group
+
+    def resolve(self, now: datetime.time) -> List[StreamerEntry]:
+        if self.warning is None:
+            for rule in self.rules:
+                if _in_window(now, rule.start, rule.end):
+                    return _apply_order(self.members, rule.order)
+        return list(self.members)
+
+
+def _apply_order(members: List[StreamerEntry], order: List[str]) -> List[StreamerEntry]:
+    """Members named in `order` come first in that order; any not named are
+    appended in their original (default) order."""
+    by_name = {m.username: m for m in members}
+    ordered = [by_name[name] for name in order if name in by_name]
+    named = set(order)
+    ordered += [m for m in members if m.username not in named]
+    return ordered
+
+
 _HHMM_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 
 
