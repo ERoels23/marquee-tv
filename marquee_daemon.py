@@ -420,6 +420,12 @@ class TwitchTVController:
         self.grace_period_start = None
         self.manual_override = False
 
+    def _apply_playback_token(self, token: str) -> None:
+        if token == "play":
+            self.playback_enabled = True
+        elif token == "stop":
+            self._stop_playback()
+
     def show_notification(self, new_streamer: str, new_stream_info: Dict):
         """Show a desktop notification about upcoming stream switch"""
         message = f"{new_streamer} went live! switching in 5 minutes"
@@ -540,7 +546,9 @@ class TwitchTVController:
                 control_signal = self.check_control_signal()
                 if control_signal is not None:
                     target, mode = control_signal
-                    if mode == "oneshot":
+                    if target is None and mode in ("play", "stop"):
+                        self._apply_playback_token(mode)
+                    elif mode == "oneshot":
                         pass  # UI handles one-shot streams entirely on its own
                     elif target == "" and mode is None:
                         # Legacy "switch" command - switch to highest priority now
@@ -548,6 +556,17 @@ class TwitchTVController:
                     elif target and target in self.live_streams:
                         self._clear_cooldown(target)
                         control_target, control_mode = target, mode
+
+                # An explicit switch:<streamer> implies "play".
+                if control_target is not None:
+                    self.playback_enabled = True
+
+                if not self.playback_enabled:
+                    self.switching_soon = None
+                    self.grace_period_start = None
+                    self.save_status()
+                    time.sleep(CHECK_INTERVAL)
+                    continue
 
                 # The current stream's process has exited: classify it as
                 # stream-end (cooldown + prune) vs hand-close once, then
@@ -623,6 +642,7 @@ class TwitchTVController:
         # Cleanup
         if self.current_process:
             self.current_process.terminate()
+        subprocess.run(["pkill", "-x", "chatterino"], capture_output=True)
         STATUS_FILE.unlink(missing_ok=True)
         CONTROL_FILE.unlink(missing_ok=True)
 

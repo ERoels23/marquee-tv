@@ -374,6 +374,21 @@ def test_stop_playback_tears_down_and_clears_state(monkeypatch):
     assert ["pkill", "-x", "chatterino"] in killed
 
 
+def test_apply_control_play_enables_playback():
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    ctrl.playback_enabled = False
+    ctrl._apply_playback_token("play")
+    assert ctrl.playback_enabled is True
+
+
+def test_apply_control_stop_calls_stop_playback(monkeypatch):
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    called = []
+    monkeypatch.setattr(ctrl, "_stop_playback", lambda: called.append(True))
+    ctrl._apply_playback_token("stop")
+    assert called == [True]
+
+
 def test_save_status_includes_playback_enabled(tmp_path, monkeypatch):
     monkeypatch.setattr("marquee_daemon.STATUS_FILE", tmp_path / ".status.json")
     ctrl = TwitchTVController.__new__(TwitchTVController)
