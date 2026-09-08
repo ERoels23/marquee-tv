@@ -68,6 +68,8 @@ class TwitchTVController:
         self.last_api_update: float = 0  # Timestamp of last API call
         self.cooldowns: Dict[str, float] = {}  # streamer -> unix expiry; skipped by get_highest_priority_live
         self.current_socket_path: Optional[Path] = None
+        self.current_stream_started_at: Optional[float] = None
+        self._handled_current_death: bool = False
         self.last_known_game: Optional[str] = None
         self.last_known_title: Optional[str] = None
         self.last_seen: Dict[str, Dict] = self._load_last_seen()
@@ -285,6 +287,24 @@ class TwitchTVController:
             return False
         return self.current_process.poll() is None
 
+    def _handle_stream_death(self) -> None:
+        """Called once when the current mpv/streamlink process has exited.
+        Distinguishes "the stream ended" (cool the streamer down so we don't
+        immediately relaunch a dead channel while the API still reports it
+        live) from "the user hand-closed mpv to skip" (fall through to normal
+        next-priority selection, no cooldown)."""
+        streamer = self.current_stream
+        if streamer is None:
+            return
+        self.last_api_update = 0.0  # force a full API refresh next tick
+        ran_for = time.monotonic() - (self.current_stream_started_at or 0.0)
+        still_live = self._query_single_live(streamer) is not None
+        if (not still_live) or ran_for < MIN_REAL_SESSION:
+            self.cooldowns[streamer] = time.time() + RELAUNCH_COOLDOWN
+            self.live_streams.pop(streamer, None)
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] {streamer} ended "
+                  f"(ran {int(ran_for)}s, still_live={still_live}) — cooling down {RELAUNCH_COOLDOWN}s")
+
     def launch_stream(self, streamer: str, stream_info: Optional[Dict] = None):
         """Launch a Twitch stream using streamlink"""
         # Kill any existing process
@@ -354,6 +374,8 @@ class TwitchTVController:
             stderr=subprocess.DEVNULL
         )
         self.current_stream = streamer
+        self.current_stream_started_at = time.monotonic()
+        self._handled_current_death = False
         self.switching_soon = None
         self.grace_period_start = None
         self.save_status()

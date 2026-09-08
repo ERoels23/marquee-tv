@@ -258,3 +258,40 @@ def test_highest_priority_no_cooldowns_attr_safe():
     ctrl.priority_list = ["alpha"]
     ctrl.cooldowns = {}
     assert ctrl.get_highest_priority_live({"alpha": {}}) == "alpha"
+
+
+def _dead_ctrl(monkeypatch, still_live, ran_for):
+    monkeypatch.setattr("marquee_daemon.time.time", lambda: 1000.0)
+    ctrl = TwitchTVController.__new__(TwitchTVController)
+    ctrl.priority_list = ["alpha", "beta"]
+    ctrl.cooldowns = {}
+    ctrl.live_streams = {"alpha": {"title": "t"}, "beta": {"title": "t2"}}
+    ctrl.current_stream = "alpha"
+    ctrl.current_stream_started_at = 1000.0 - ran_for
+    ctrl.last_api_update = 999.0
+    monkeypatch.setattr("marquee_daemon.time.monotonic", lambda: 1000.0)
+    monkeypatch.setattr(ctrl, "_query_single_live",
+                        lambda s: {"title": "t"} if still_live else None)
+    return ctrl
+
+
+def test_stream_death_when_offline_cools_down_and_drops(monkeypatch):
+    ctrl = _dead_ctrl(monkeypatch, still_live=False, ran_for=3600)
+    ctrl._handle_stream_death()
+    assert ctrl.cooldowns["alpha"] == 1000.0 + 300
+    assert "alpha" not in ctrl.live_streams
+    assert ctrl.last_api_update == 0.0
+
+
+def test_stream_death_short_session_still_live_cools_down(monkeypatch):
+    ctrl = _dead_ctrl(monkeypatch, still_live=True, ran_for=5)
+    ctrl._handle_stream_death()
+    assert "alpha" in ctrl.cooldowns
+    assert "alpha" not in ctrl.live_streams
+
+
+def test_stream_death_real_session_still_live_is_deliberate_close(monkeypatch):
+    ctrl = _dead_ctrl(monkeypatch, still_live=True, ran_for=3600)
+    ctrl._handle_stream_death()
+    assert "alpha" not in ctrl.cooldowns
+    assert "alpha" in ctrl.live_streams
