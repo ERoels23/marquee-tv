@@ -72,8 +72,8 @@ class QuitConfirmModal(ModalScreen[Optional[str]]):
     """
 
     OPTIONS = [
-        ("stop", "Quit and stop daemon"),
-        ("keep", "Quit and keep daemon running"),
+        ("keep", "Quit — leave daemon running"),
+        ("stop", "Quit and stop the daemon"),
     ]
 
     def __init__(self) -> None:
@@ -230,6 +230,7 @@ class MarqueeApp(App):
         self.last_seen: Dict[str, str] = {}
         self.current_stream: Optional[str] = None
         self.stream_alive = False
+        self.playback_enabled = False
         self.ad_hoc_mode: Optional[str] = None
         self.last_api_poll = 0.0
         self._daemon_was_running = False
@@ -250,6 +251,8 @@ class MarqueeApp(App):
         self.load_entries()
         self._terminal_width = self.size.width
         self._terminal_height = self.size.height
+        if not self.daemon_running():
+            self.start_service()  # always monitor so info is visible without playing
         self.refresh_data(force=True)
         self.render_frame()
         self.set_interval(REFRESH_INTERVAL, self.tick)
@@ -362,6 +365,7 @@ class MarqueeApp(App):
             previous_stream = self.current_stream
             self.current_stream = status.get('current_stream')
             self.stream_alive = status.get('stream_alive', False)
+            self.playback_enabled = status.get('playback_enabled', False)
             self.live_streams = status.get('live_streams', self.live_streams)
         except (json.JSONDecodeError, OSError):
             return
@@ -425,6 +429,8 @@ class MarqueeApp(App):
     def _header_data(self) -> HeaderData:
         if not self._daemon_was_running:
             return HeaderData(active=False, inactive_message="Daemon Offline")
+        if not self.playback_enabled:
+            return HeaderData(active=False, inactive_message="Playback stopped — press (S) to start")
         if not self.current_stream:
             return HeaderData(active=False)
         info = self.live_streams.get(self.current_stream, {})
@@ -753,30 +759,24 @@ class MarqueeApp(App):
     def stop_service(self) -> None:
         import subprocess as sp
         sp.run([str(SCRIPT_DIR / "marquee.sh"), "stop"], capture_output=True)
-        sp.run(["pkill", "-f", "mpv"], capture_output=True)
         sp.run(["pkill", "-x", "chatterino"], capture_output=True)
 
     async def action_start_service(self) -> None:
         self.last_footer_key = "s"
-        already_running = self.daemon_running()
-        self.render_frame()  # paint the highlight before the blocking start_service call
-        if not already_running:
+        if not self.daemon_running():
             import asyncio
             await asyncio.to_thread(self.start_service)
-            self.refresh_data(force=True)
-            self.render_frame()
+        with open(CONTROL_FILE, 'w') as f:
+            f.write("play")
+        self.render_frame()
 
     async def action_stop_service(self) -> None:
         self.last_footer_key = "x"
-        running = self.daemon_running()
-        self.render_frame()  # paint the highlight before the blocking stop_service call
-        if running:
-            import asyncio
-            await asyncio.to_thread(self.stop_service)
-            self.current_stream = None
-            self.stream_alive = False
-            self.refresh_data(force=True)
-            self.render_frame()
+        with open(CONTROL_FILE, 'w') as f:
+            f.write("stop")
+        self.current_stream = None
+        self.stream_alive = False
+        self.render_frame()
 
     def action_request_quit(self) -> None:
         import subprocess as sp
