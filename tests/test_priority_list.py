@@ -239,3 +239,32 @@ def test_block_no_when_rules_warns():
 def test_block_no_members_warns():
     b = _block("@when 08:00-20:00: a\n")
     assert b.warning is not None
+
+
+from priority_list import resolve_entries
+
+
+def test_resolve_entries_flattens_block_by_time(tmp_path):
+    f = tmp_path / "streamers.txt"
+    f.write_text(
+        "top\n@block\na\nb\n@when 20:00-08:00: b, a\n@end\nbottom\n"
+    )
+    entries = parse_streamers_file(f)
+    day = resolve_entries(entries, datetime.time(12, 0))
+    assert [e.username for e in day] == ["top", "a", "b", "bottom"]
+    night = resolve_entries(entries, datetime.time(23, 0))
+    assert [e.username for e in night] == ["top", "b", "a", "bottom"]
+
+
+def test_resolve_entries_no_block_is_identity(tmp_path):
+    f = tmp_path / "streamers.txt"
+    f.write_text("a\n---\nb\n")
+    entries = parse_streamers_file(f)
+    out = resolve_entries(entries, datetime.time(12, 0))
+    assert usernames(out) == ["a", "b"]
+
+
+def test_usernames_still_accepts_flat_list(tmp_path):
+    f = tmp_path / "streamers.txt"
+    f.write_text("a\nb\n")
+    assert usernames(parse_streamers_file(f)) == ["a", "b"]

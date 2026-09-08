@@ -191,5 +191,20 @@ def _in_window(t: datetime.time, start: datetime.time, end: datetime.time) -> bo
     return t >= start or t < end
 
 
+def resolve_entries(entries, now: Optional[datetime.time] = None) -> List[StreamerEntry]:
+    """Flatten a parsed priority list to a plain ordered list of StreamerEntry,
+    expanding each TimeBlock into its effective order for `now`
+    (default: the current wall-clock time). Separators are preserved."""
+    if now is None:
+        now = datetime.datetime.now().time()
+    out: List[StreamerEntry] = []
+    for item in entries:
+        if isinstance(item, TimeBlock):
+            out.extend(item.resolve(now))
+        else:
+            out.append(item)
+    return out
+
+
 def usernames(entries: List[StreamerEntry]) -> List[str]:
     return [e.username for e in entries if not e.is_separator]
